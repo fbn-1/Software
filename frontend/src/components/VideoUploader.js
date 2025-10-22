@@ -26,7 +26,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       formData.append("title", title || "");
 
     try {
-      const res = await axios.post("http://localhost:5000/upload", formData, {
+      const res = await axios.post("/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
@@ -69,7 +69,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         consultant_rating: consultantRating
       };
 
-      const res = await axios.put(`http://localhost:5000/transcripts/${idToUpdate}`, payload);
+      const res = await axios.put(`/transcripts/${idToUpdate}`, payload);
       alert(`✅ Updated transcript ${res.data.id}`);
     } catch (err) {
       console.error(err);

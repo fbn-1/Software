@@ -25,7 +25,7 @@ export default function VideoTranscriber() {
     formData.append("video", file);
 
     try {
-      const response = await axios.post("http://localhost:5000/upload", formData, {
+      const response = await axios.post("/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setTranscript(response.data.transcript);
@@ -44,7 +44,7 @@ export default function VideoTranscriber() {
 
     try {
       const lines = transcript.split("\n").filter((line) => line.trim() !== "");
-      await axios.post("http://localhost:5000/transcripts", {
+      await axios.post("/transcripts", {
         filename: file ? file.name : "manual_entry.txt",
         lines,
       });
@@ -58,7 +58,7 @@ export default function VideoTranscriber() {
   // Fetch transcripts from DB (manual trigger)
   const fetchSavedTranscripts = async () => {
     try {
-      const response = await axios.get("http://localhost:5000/transcripts");
+      const response = await axios.get("/transcripts");
       setSavedTranscripts(response.data);
     } catch (err) {
       console.error(err);

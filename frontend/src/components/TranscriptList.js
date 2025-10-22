@@ -9,7 +9,7 @@ export default function TranscriptList({ onSelectTranscript, onTickersLoaded, on
 
   const fetchSavedTranscripts = async () => {
     try {
-      const response = await axios.get("http://localhost:5000/transcripts");
+      const response = await axios.get("/transcripts");
       setTranscripts(response.data);
       setError(null);
     } catch (err) {
@@ -31,7 +31,7 @@ export default function TranscriptList({ onSelectTranscript, onTickersLoaded, on
 
   const deleteTranscript = async (id) => {
     try {
-      await axios.delete(`http://localhost:5000/transcripts/${id}`);
+      await axios.delete(`/transcripts/${id}`);
       setTranscripts(transcripts.filter((t) => t.id !== id));
     } catch (err) {
       console.error(err);
@@ -44,7 +44,7 @@ export default function TranscriptList({ onSelectTranscript, onTickersLoaded, on
     try {
       if (onSelectTranscript) onSelectTranscript(id);
       // try to fetch annotations and extract unique tickers
-      const annRes = await axios.get(`http://localhost:5000/annotations/${id}`);
+      const annRes = await axios.get(`/annotations/${id}`);
       const ann = annRes.data || [];
       console.log(ann);
       const tickerSet = new Set();
