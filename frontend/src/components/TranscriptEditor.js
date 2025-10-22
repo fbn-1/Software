@@ -68,7 +68,7 @@ const [title, setTitle] = useState("");
     if (!transcriptId) return;
     const fetchMeta = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/transcripts/${transcriptId}`);
+  const res = await axios.get(`/transcripts/${transcriptId}`);
         const meta = res.data || {};
         // Server stores title in filename (routes/transcripts uses filename)
         setTitle(meta.title || meta.filename || "");
@@ -103,7 +103,7 @@ const [title, setTitle] = useState("");
         consultant_name: consultantName,
         consultant_rating: Number(consultantRating)
       };
-      const res = await axios.put(`http://localhost:5000/transcripts/${transcriptId}`, payload);
+  const res = await axios.put(`/transcripts/${transcriptId}`, payload);
       alert(`✅ Updated transcript ${res.data.id}`);
     } catch (err) {
       console.error('Failed to update transcript metadata', err);
@@ -168,7 +168,7 @@ const [title, setTitle] = useState("");
     const fetchContent = async () => {
       try {
         // First try the simplified endpoint
-        const resp = await axios.get(`http://localhost:5000/transcripts/${transcriptId}/content`);
+  const resp = await axios.get(`/transcripts/${transcriptId}/content`);
         if (resp && Object.prototype.hasOwnProperty.call(resp.data, 'content')) {
           setChunkContent(resp.data.content || "");
           setTotalPages(1);
@@ -194,7 +194,7 @@ const [title, setTitle] = useState("");
 
   const fetchAnnotations = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/annotations/${transcriptId}`);
+  const res = await axios.get(`/annotations/${transcriptId}`);
       setAnnotations(res.data);
       return res.data;
     } catch (err) {
@@ -215,7 +215,7 @@ const [title, setTitle] = useState("");
       // Fetch transcript metadata to include as a heading
       let metadata = null;
       try {
-        const metaRes = await axios.get(`http://localhost:5000/transcripts/${transcriptId}`);
+  const metaRes = await axios.get(`/transcripts/${transcriptId}`);
         metadata = metaRes.data;
       } catch (err) {
         // metadata is optional; continue without it
@@ -423,10 +423,10 @@ const [title, setTitle] = useState("");
 
     try {
       if (editingAnnotationId) {
-        const resp = await axios.put(`http://localhost:5000/annotations/${editingAnnotationId}`, annotationPayload);
+  const resp = await axios.put(`/annotations/${editingAnnotationId}`, annotationPayload);
         console.log('PUT /annotations response', resp.data);
       } else {
-        const resp = await axios.post("http://localhost:5000/annotations", annotationPayload);
+  const resp = await axios.post(`/annotations`, annotationPayload);
         console.log('POST /annotations response', resp.data);
       }
 
@@ -454,7 +454,7 @@ const [title, setTitle] = useState("");
     try {
       // optimistic UI: remove locally
       setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
-      await axios.delete(`http://localhost:5000/annotations/${annotationId}`);
+  await axios.delete(`/annotations/${annotationId}`);
     } catch (err) {
       console.error(err);
       alert("Failed to delete annotation. Refreshing annotations.");

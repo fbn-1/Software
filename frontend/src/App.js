@@ -22,7 +22,7 @@ function App() {
     if (!transcriptId) return;
     const fetchMeta = async () => {
       try {
-        const res = await fetch(`http://localhost:5000/transcripts/${transcriptId}`);
+        const res = await fetch(`/transcripts/${transcriptId}`);
         if (!res.ok) return;
         const meta = await res.json();
         setTitle(meta.title || meta.filename || "");
