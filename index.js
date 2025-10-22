@@ -20,15 +20,28 @@ app.use(express.json());
 
 
 
-app.use(cors());
+// CORS policy: allow requests from the configured FRONTEND_URL or a comma-separated
+// ALLOWED_ORIGINS list. Also allow no-origin requests (curl, server-to-server) and
+// any localhost origin during development.
+const FRONTEND_URL = process.env.FRONTEND_URL || null;
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 
-// CORS: allow only the frontend origin (set FRONTEND_URL in env or default to localhost)
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+function isLocalhostOrigin(origin) {
+	try {
+		const u = new URL(origin);
+		return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+	} catch (e) {
+		return false;
+	}
+}
+
 app.use(cors({
 	origin: (origin, callback) => {
-		// allow requests with no origin (like curl, server-to-server)
+		// allow requests with no origin (like curl or local file://)
 		if (!origin) return callback(null, true);
-		if (origin === FRONTEND_URL) return callback(null, true);
+		if (FRONTEND_URL && origin === FRONTEND_URL) return callback(null, true);
+		if (ALLOWED_ORIGINS.length > 0 && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+		if (isLocalhostOrigin(origin)) return callback(null, true);
 		return callback(new Error('CORS policy: This origin is not allowed'));
 	}
 }));
