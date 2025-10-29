@@ -109,7 +109,7 @@ async function ensureSchema() {
 		  sentiment VARCHAR(16),
 		  created_at TIMESTAMP DEFAULT now(),
 		  rating INTEGER,
-		  subsectors TEXT,
+		  subsector TEXT,
 		  datatitle TEXT
 		);
 		`);
