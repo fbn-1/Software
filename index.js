@@ -11,6 +11,7 @@ import uploadRoutes from "./routes/upload.js";
 import transcriptRoutes from "./routes/transcripts.js";
 import annotationsRouter from "./routes/annotations.js";
 import bloombergRouter from "./routes/bloombergroute.js";
+import s3Router from "./routes/s3.js";
 import pool from "./database/db.js";
 
 dotenv.config();
@@ -62,6 +63,7 @@ app.use("/upload", uploadRoutes);
 app.use("/transcripts", transcriptRoutes);
 app.use("/annotations", annotationsRouter);
 app.use("/bloombergdata", bloombergRouter);
+app.use("/s3", s3Router);
 
 // Serve frontend build (if present) so the same Render service can host both API and UI
 const __filename = fileURLToPath(import.meta.url);

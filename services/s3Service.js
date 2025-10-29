@@ -27,12 +27,13 @@ export function generatePresignedUploadUrl(fileName, fileType) {
     Bucket: BUCKET_NAME,
     Key: key,
     ContentType: fileType,
-    Expires: 300, // 5 minutes
+    Expires: 600, // 10 minutes for large uploads
     ACL: 'private'
   };
 
   const uploadUrl = s3.getSignedUrl('putObject', params);
-  const downloadUrl = `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`;
+  const region = process.env.AWS_REGION || 'us-east-1';
+  const downloadUrl = `https://${BUCKET_NAME}.s3.${region}.amazonaws.com/${key}`;
 
   return {
     uploadUrl,

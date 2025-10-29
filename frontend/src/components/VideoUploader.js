@@ -18,41 +18,81 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
     setError(null);
 
     try {
-      // Check file size and choose upload method
       const fileSizeMB = file.size / (1024 * 1024);
-      const useS3Upload = fileSizeMB > 50; // Use S3 for files > 50MB
       
-      console.log(`📤 Uploading ${file.name} (${fileSizeMB.toFixed(1)}MB)${useS3Upload ? ' via S3' : ' directly'}...`);
-
-      const formData = new FormData();
-      formData.append("video", file);
-      formData.append("consultant_name", consultantName || "");
-      if (consultantRating !== null && consultantRating !== undefined && String(consultantRating).trim() !== "") {
-        formData.append("consultant_rating", String(consultantRating));
-      }
-      formData.append("title", title || "");
-
-      // Choose endpoint based on file size
-      const uploadEndpoint = useS3Upload ? "/upload/large" : "/upload";
+      // Always use presigned S3 upload for production (Render) or files > 50MB
+      const isProduction = window.location.hostname.includes('onrender.com');
+      const useS3Upload = isProduction || fileSizeMB > 50;
       
-      const res = await axios.post(uploadEndpoint, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          console.log(`Upload progress: ${percentCompleted}%`);
+      console.log(`📤 Uploading ${file.name} (${fileSizeMB.toFixed(1)}MB)${useS3Upload ? ' via presigned S3' : ' directly'}...`);
+
+      if (useS3Upload) {
+        // Step 1: Get presigned URL from backend
+        console.log("🔗 Getting presigned URL...");
+        const presignedResponse = await axios.post("/s3/presigned-url", {
+          fileName: file.name,
+          fileType: file.type
+        });
+
+        const { uploadUrl, s3Key } = presignedResponse.data;
+        console.log("✅ Got presigned URL");
+
+        // Step 2: Upload directly to S3
+        console.log("📤 Uploading to S3...");
+        await axios.put(uploadUrl, file, {
+          headers: {
+            'Content-Type': file.type
+          },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`Upload progress: ${percentCompleted}%`);
+          }
+        });
+        console.log("✅ Upload to S3 completed");
+
+        // Step 3: Notify backend to process the video from S3
+        console.log("⚙️ Processing video...");
+        const processResponse = await axios.post("/upload/process-s3", {
+          s3Key: s3Key,
+          originalName: file.name,
+          consultant_name: consultantName || "",
+          consultant_rating: consultantRating
+        });
+
+        const id = processResponse.data && processResponse.data.id ? processResponse.data.id : null;
+        setUploadedId(id);
+        if (onTranscriptReady) onTranscriptReady(id);
+        alert("✅ Video uploaded and transcribed successfully!");
+      } else {
+        // Small files: upload directly through backend
+        const formData = new FormData();
+        formData.append("video", file);
+        formData.append("consultant_name", consultantName || "");
+        if (consultantRating !== null && consultantRating !== undefined && String(consultantRating).trim() !== "") {
+          formData.append("consultant_rating", String(consultantRating));
         }
-      });
+        formData.append("title", title || "");
 
-      // store the transcript id returned by the upload route so Save can update the same record
-      const id = res.data && res.data.id ? res.data.id : null;
-      setUploadedId(id);
-      if (onTranscriptReady) onTranscriptReady(id);
-      alert("✅ Video uploaded and transcribed successfully!");
+        const res = await axios.post("/upload", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`Upload progress: ${percentCompleted}%`);
+          }
+        });
+
+        const id = res.data && res.data.id ? res.data.id : null;
+        setUploadedId(id);
+        if (onTranscriptReady) onTranscriptReady(id);
+        alert("✅ Video uploaded and transcribed successfully!");
+      }
     } catch (err) {
       console.error("Upload error:", err);
       
       if (err.response?.status === 413) {
         setError("❌ File too large. Please use a smaller video file.");
+      } else if (err.response?.status === 502) {
+        setError("❌ Server timeout. Try again or use a smaller file.");
       } else if (err.response?.data?.error) {
         setError(`❌ ${err.response.data.error}`);
       } else {
