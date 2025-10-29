@@ -1,0 +1,14 @@
+# Render service spec - automatically used if you enable Render's spec in the dashboard
+services:
+  - type: web
+    name: software1-backend
+    env: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: "npm ci && npm run build:frontend"
+    startCommand: "npm start"
+    autoDeploy: true
+    disk: 1024
+    serviceDetails:
+      healthCheckPath: /health
