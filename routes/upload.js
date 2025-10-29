@@ -4,7 +4,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { splitVideo, extractAudio } from "../services/ffmpegService.js";
+import { splitVideo, extractAudio, convertToMP3 } from "../services/ffmpegService.js";
 import { transcribeAudio } from "../services/transcriptionService.js";
 import pool from "../database/db.js";
 import Sbd from "sbd";
@@ -36,21 +36,33 @@ router.post("/", upload.single("video"), async (req, res) => {
   const originalName = req.file.originalname || req.file.filename;
   const chunksDir = path.join(__dirname, "../chunks");
   const audioDir = path.join(__dirname, "../audio_chunks");
+  const tempMP3Path = path.join(__dirname, "../uploads", `temp_${Date.now()}_audio.mp3`);
 
   try {
+    // Convert to MP3 first
+    console.log(`🎵 Converting ${originalName} to MP3...`);
+    await convertToMP3(uploadedPath, tempMP3Path, "64k");
+    console.log(`✅ MP3 conversion complete`);
+    
+    // Delete original video to save space
+    fs.unlink(uploadedPath, () => {});
+
     // cleanup/create directories
     if (fs.existsSync(chunksDir)) fs.rmSync(chunksDir, { recursive: true, force: true });
     if (fs.existsSync(audioDir)) fs.rmSync(audioDir, { recursive: true, force: true });
     fs.mkdirSync(chunksDir, { recursive: true });
     fs.mkdirSync(audioDir, { recursive: true });
 
-    // split video into 5-min chunks (300s)
-    await splitVideo(uploadedPath, 300, chunksDir);
+    // split MP3 into 5-min chunks (300s)
+    await splitVideo(tempMP3Path, 300, chunksDir);
 
     const chunkFiles = fs.readdirSync(chunksDir)
-      .filter(f => f.endsWith(".mp4"))
+      .filter(f => f.endsWith(".mp4")) // ffmpeg still outputs as .mp4 container
       .sort()
       .map(f => path.join(chunksDir, f));
+    
+    // Delete full MP3 to save space
+    fs.unlink(tempMP3Path, () => {});
 
     // read optional consultant metadata from multipart form (multer puts non-file fields on req.body)
     const consultantName = req.body.consultant_name || null;
@@ -66,29 +78,38 @@ router.post("/", upload.single("video"), async (req, res) => {
 
 
     const startTime = performance.now(); 
-    // Process all chunks in parallel
-    const chunkResults = await Promise.all(chunkFiles.map(async (chunkFile, idx) => {
-  const chunkStart = performance.now()
+    // Process all chunks in parallel with batching
+    const batchSize = 10; // Increased for MP3 chunks
+    const allResults = [];
+    
+    for (let i = 0; i < chunkFiles.length; i += batchSize) {
+      const batch = chunkFiles.slice(i, i + batchSize);
+      console.log(`⚙️ Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunkFiles.length / batchSize)}`);
+      
+      const batchResults = await Promise.all(batch.map(async (chunkFile, batchIdx) => {
+        const idx = i + batchIdx;
+        const chunkStart = performance.now();
 
-      const baseName = path.basename(chunkFile, ".mp4");
-      const audioPath = path.join(audioDir, `${baseName}.wav`);
-      await extractAudio(chunkFile, audioPath);
-      const transcript = await transcribeAudio(audioPath);
-      // split transcript into sentences
-      const sentences = Sbd.sentences(transcript);
-      const chunkContent = sentences.join("\n");
+        // Transcribe MP3 chunk directly
+        const transcript = await transcribeAudio(chunkFile);
+        
+        // Clean up chunk immediately
+        fs.unlink(chunkFile, () => {});
+        
+        const sentences = Sbd.sentences(transcript);
+        const chunkContent = sentences.join("\n");
    
-       const chunkEnd = performance.now();
-        console.log(
-    `⏱️ Chunk ${idx + 1} processed in ${(chunkEnd - chunkStart) / 1000} seconds`
-  );
-      return chunkContent;
-    }));
+        const chunkEnd = performance.now();
+        console.log(`⏱️ Chunk ${idx + 1}/${chunkFiles.length} in ${((chunkEnd - chunkStart) / 1000).toFixed(1)}s`);
+        return chunkContent;
+      }));
+      
+      allResults.push(...batchResults);
+    }
 
-    const fullTranscript = chunkResults.join("\n\n");
-    // console.log("fullTranscript",fullTranscript);
-const endTime = performance.now();
-console.log(`✅ All chunks processed in ${(endTime - startTime) / 1000} seconds`);
+    const fullTranscript = allResults.join("\n\n");
+    const endTime = performance.now();
+    console.log(`✅ All chunks processed in ${((endTime - startTime) / 1000).toFixed(1)}s`);
     // update full transcript in main table (optional)
     await pool.query(
       `UPDATE transcripts SET content = $1 WHERE id = $2`,
@@ -135,32 +156,53 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
   const chunksDir = path.join(__dirname, "../chunks");
   const audioDir = path.join(__dirname, "../audio_chunks");
   let tempVideoPath = null;
+  let tempMP3Path = null;
 
   try {
-    // Upload to S3 first
-    const fileExtension = originalName.split('.').pop();
-    const s3Key = `videos/${crypto.randomUUID()}.${fileExtension}`;
+    // Convert to MP3 BEFORE uploading to S3
+    console.log(`🎵 Converting ${originalName} (${(req.file.size / 1024 / 1024).toFixed(1)}MB) to MP3...`);
     
-    console.log(`📤 Uploading ${originalName} (${(req.file.size / 1024 / 1024).toFixed(1)}MB) to S3...`);
+    // Save video buffer to temp file first
+    tempVideoPath = path.join(__dirname, "../uploads", `temp_${Date.now()}_${originalName}`);
+    fs.writeFileSync(tempVideoPath, req.file.buffer);
+    
+    // Convert to MP3
+    tempMP3Path = path.join(__dirname, "../uploads", `temp_${Date.now()}_audio.mp3`);
+    await convertToMP3(tempVideoPath, tempMP3Path, "64k");
+    
+    // Delete original video
+    fs.unlinkSync(tempVideoPath);
+    tempVideoPath = null;
+    
+    const mp3Stats = fs.statSync(tempMP3Path);
+    console.log(`✅ MP3 conversion complete: ${(mp3Stats.size / 1024 / 1024).toFixed(1)}MB (${((1 - mp3Stats.size / req.file.size) * 100).toFixed(0)}% smaller)`);
+    
+    // Upload MP3 to S3 instead of video
+    const s3Key = `audio/${crypto.randomUUID()}.mp3`;
+    
+    console.log(`📤 Uploading MP3 to S3...`);
     
     const uploadParams = {
       Bucket: BUCKET_NAME,
       Key: s3Key,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
+      Body: fs.createReadStream(tempMP3Path),
+      ContentType: 'audio/mpeg',
       ACL: 'private'
     };
 
     const result = await s3.upload(uploadParams).promise();
     console.log(`✅ Uploaded to S3: ${s3Key}`);
+    
+    // Delete uploaded MP3
+    fs.unlinkSync(tempMP3Path);
 
-    // Download from S3 to process locally
-    tempVideoPath = path.join(__dirname, "../uploads", `temp_${Date.now()}_${originalName}`);
-    console.log(`📥 Downloading from S3 for processing...`);
+    // Download MP3 from S3 to process locally
+    tempMP3Path = path.join(__dirname, "../uploads", `temp_${Date.now()}_downloaded.mp3`);
+    console.log(`📥 Downloading MP3 from S3 for processing...`);
     
     const downloadParams = { Bucket: BUCKET_NAME, Key: s3Key };
     const downloadStream = s3.getObject(downloadParams).createReadStream();
-    const writeStream = fs.createWriteStream(tempVideoPath);
+    const writeStream = fs.createWriteStream(downloadMP3Path);
     
     await new Promise((resolve, reject) => {
       downloadStream.pipe(writeStream);
@@ -169,7 +211,15 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
       writeStream.on('close', resolve);
     });
 
-    console.log(`✅ Downloaded for processing: ${tempVideoPath}`);
+    console.log(`✅ Downloaded MP3 for processing`);
+    
+    // Delete the temp upload file
+    if (tempMP3Path && fs.existsSync(tempMP3Path)) {
+      fs.unlinkSync(tempMP3Path);
+    }
+    
+    // Use the downloaded MP3 for processing
+    tempMP3Path = downloadMP3Path;
 
     // cleanup/create directories
     if (fs.existsSync(chunksDir)) fs.rmSync(chunksDir, { recursive: true, force: true });
@@ -177,13 +227,16 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
     fs.mkdirSync(chunksDir, { recursive: true });
     fs.mkdirSync(audioDir, { recursive: true });
 
-    // split video into 5-min chunks (300s)
-    await splitVideo(tempVideoPath, 300, chunksDir);
+    // split MP3 into 5-min chunks (300s)
+    await splitVideo(tempMP3Path, 300, chunksDir);
 
     const chunkFiles = fs.readdirSync(chunksDir)
-      .filter(f => f.endsWith(".mp4"))
+      .filter(f => f.endsWith(".mp4")) // ffmpeg still outputs as .mp4 container
       .sort()
       .map(f => path.join(chunksDir, f));
+    
+    // Delete full MP3 to save space
+    fs.unlink(tempMP3Path, () => {});
 
     // read optional consultant metadata from multipart form
     const consultantName = req.body.consultant_name || null;
@@ -198,26 +251,38 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
     const transcriptId = insertRes.rows[0].id;
 
     const startTime = performance.now(); 
-    // Process all chunks in parallel
-    const chunkResults = await Promise.all(chunkFiles.map(async (chunkFile, idx) => {
-      const chunkStart = performance.now()
+    // Process all chunks in parallel with batching
+    const batchSize = 10; // Increased for MP3 chunks
+    const allResults = [];
+    
+    for (let i = 0; i < chunkFiles.length; i += batchSize) {
+      const batch = chunkFiles.slice(i, i + batchSize);
+      console.log(`⚙️ Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunkFiles.length / batchSize)}`);
+      
+      const batchResults = await Promise.all(batch.map(async (chunkFile, batchIdx) => {
+        const idx = i + batchIdx;
+        const chunkStart = performance.now();
 
-      const baseName = path.basename(chunkFile, ".mp4");
-      const audioPath = path.join(audioDir, `${baseName}.wav`);
-      await extractAudio(chunkFile, audioPath);
-      const transcript = await transcribeAudio(audioPath);
-      // split transcript into sentences
-      const sentences = Sbd.sentences(transcript);
-      const chunkContent = sentences.join("\n");
+        // Transcribe MP3 chunk directly
+        const transcript = await transcribeAudio(chunkFile);
+        
+        // Clean up chunk immediately
+        fs.unlink(chunkFile, () => {});
+        
+        const sentences = Sbd.sentences(transcript);
+        const chunkContent = sentences.join("\n");
    
-      const chunkEnd = performance.now();
-      console.log(`⏱️ Chunk ${idx + 1} processed in ${(chunkEnd - chunkStart) / 1000} seconds`);
-      return chunkContent;
-    }));
+        const chunkEnd = performance.now();
+        console.log(`⏱️ Chunk ${idx + 1}/${chunkFiles.length} in ${((chunkEnd - chunkStart) / 1000).toFixed(1)}s`);
+        return chunkContent;
+      }));
+      
+      allResults.push(...batchResults);
+    }
 
-    const fullTranscript = chunkResults.join("\n\n");
+    const fullTranscript = allResults.join("\n\n");
     const endTime = performance.now();
-    console.log(`✅ All chunks processed in ${(endTime - startTime) / 1000} seconds`);
+    console.log(`✅ All chunks processed in ${((endTime - startTime) / 1000).toFixed(1)}s`);
     
     // update full transcript in main table
     await pool.query(
@@ -246,6 +311,9 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
     // Clean up temp files
     if (tempVideoPath && fs.existsSync(tempVideoPath)) {
       fs.unlink(tempVideoPath, () => {});
+    }
+    if (tempMP3Path && fs.existsSync(tempMP3Path)) {
+      fs.unlink(tempMP3Path, () => {});
     }
   }
 });
@@ -297,11 +365,12 @@ router.post("/process-s3", async (req, res) => {
   }
 });
 
-// Async function to process video from S3
+// Async function to process video/audio from S3
 async function processVideoFromS3(transcriptId, s3Key, originalName) {
   const chunksDir = path.join(__dirname, "../chunks");
   const audioDir = path.join(__dirname, "../audio_chunks");
-  const tempVideoPath = path.join(__dirname, "../uploads", `temp_${Date.now()}_${originalName}`);
+  const tempDownloadPath = path.join(__dirname, "../uploads", `temp_${Date.now()}_${originalName}`);
+  let tempMP3Path = null;
 
   try {
     console.log(`📥 Downloading ${originalName} from S3 for transcript ${transcriptId}`);
@@ -309,7 +378,7 @@ async function processVideoFromS3(transcriptId, s3Key, originalName) {
     // Download from S3
     const downloadParams = { Bucket: BUCKET_NAME, Key: s3Key };
     const downloadStream = s3.getObject(downloadParams).createReadStream();
-    const writeStream = fs.createWriteStream(tempVideoPath);
+    const writeStream = fs.createWriteStream(tempDownloadPath);
     
     await new Promise((resolve, reject) => {
       downloadStream.pipe(writeStream);
@@ -318,40 +387,74 @@ async function processVideoFromS3(transcriptId, s3Key, originalName) {
       writeStream.on('close', resolve);
     });
 
-    console.log(`✅ Downloaded: ${tempVideoPath}`);
+    console.log(`✅ Downloaded: ${tempDownloadPath}`);
+
+    // Check if it's already MP3 (from browser conversion) or needs conversion
+    const isMP3 = s3Key.endsWith('.mp3') || originalName.toLowerCase().endsWith('.mp3');
+    
+    if (isMP3) {
+      console.log(`🎵 File is already MP3, skipping conversion`);
+      tempMP3Path = tempDownloadPath; // Use downloaded file directly
+    } else {
+      // Convert video to MP3 first
+      console.log(`🎵 Converting to MP3 for transcript ${transcriptId}...`);
+      tempMP3Path = path.join(__dirname, "../uploads", `temp_${Date.now()}_audio.mp3`);
+      await convertToMP3(tempDownloadPath, tempMP3Path, "64k");
+      console.log(`✅ MP3 conversion complete`);
+      
+      // Delete original video to save space
+      fs.unlinkSync(tempDownloadPath);
+    }
 
     // cleanup/create directories
     if (fs.existsSync(chunksDir)) fs.rmSync(chunksDir, { recursive: true, force: true });
     if (fs.existsSync(audioDir)) fs.rmSync(audioDir, { recursive: true, force: true });
     fs.mkdirSync(chunksDir, { recursive: true });
     fs.mkdirSync(audioDir, { recursive: true });
+    fs.mkdirSync(audioDir, { recursive: true });
 
-    // split video into 5-min chunks (300s)
-    await splitVideo(tempVideoPath, 300, chunksDir);
+    // split MP3 into 5-min chunks (300s)
+    await splitVideo(tempMP3Path, 300, chunksDir);
 
     const chunkFiles = fs.readdirSync(chunksDir)
-      .filter(f => f.endsWith(".mp4"))
+      .filter(f => f.endsWith(".mp4")) // ffmpeg still outputs as .mp4 container
       .sort()
       .map(f => path.join(chunksDir, f));
+    
+    // Delete full MP3 to save space
+    fs.unlink(tempMP3Path, () => {});
 
     const startTime = performance.now(); 
-    // Process all chunks in parallel
-    const chunkResults = await Promise.all(chunkFiles.map(async (chunkFile, idx) => {
-      const chunkStart = performance.now();
+    // Process all chunks in parallel with batching to avoid overwhelming the API
+    const batchSize = 10; // Increased batch size since we're using smaller MP3 chunks
+    const allResults = [];
+    
+    for (let i = 0; i < chunkFiles.length; i += batchSize) {
+      const batch = chunkFiles.slice(i, i + batchSize);
+      console.log(`⚙️ Transcript ${transcriptId} - Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunkFiles.length / batchSize)}`);
+      
+      const batchResults = await Promise.all(batch.map(async (chunkFile, batchIdx) => {
+        const idx = i + batchIdx;
+        const chunkStart = performance.now();
 
-      const baseName = path.basename(chunkFile, ".mp4");
-      const audioPath = path.join(audioDir, `${baseName}.wav`);
-      await extractAudio(chunkFile, audioPath);
-      const transcript = await transcribeAudio(audioPath);
-      const sentences = Sbd.sentences(transcript);
-      const chunkContent = sentences.join("\n");
+        // Transcribe MP3 chunk directly (no need to extract audio again!)
+        const transcript = await transcribeAudio(chunkFile);
+        
+        // Clean up chunk immediately to save disk space
+        fs.unlink(chunkFile, () => {});
+        
+        const sentences = Sbd.sentences(transcript);
+        const chunkContent = sentences.join("\n");
    
-      const chunkEnd = performance.now();
-      console.log(`⏱️ Transcript ${transcriptId} - Chunk ${idx + 1} processed in ${(chunkEnd - chunkStart) / 1000}s`);
-      return chunkContent;
-    }));
+        const chunkEnd = performance.now();
+        console.log(`⏱️ Transcript ${transcriptId} - Chunk ${idx + 1}/${chunkFiles.length} in ${((chunkEnd - chunkStart) / 1000).toFixed(1)}s`);
+        return chunkContent;
+      }));
+      
+      allResults.push(...batchResults);
+    }
 
-    const fullTranscript = chunkResults.join("\n\n");
+    const fullTranscript = allResults.join("\n\n");
     const endTime = performance.now();
     console.log(`✅ Transcript ${transcriptId} - All chunks processed in ${(endTime - startTime) / 1000}s`);
     
@@ -364,8 +467,11 @@ async function processVideoFromS3(transcriptId, s3Key, originalName) {
 
   } finally {
     // Clean up temp files
-    if (fs.existsSync(tempVideoPath)) {
-      fs.unlink(tempVideoPath, () => {});
+    if (tempDownloadPath && fs.existsSync(tempDownloadPath)) {
+      fs.unlink(tempDownloadPath, () => {});
+    }
+    if (tempMP3Path && tempMP3Path !== tempDownloadPath && fs.existsSync(tempMP3Path)) {
+      fs.unlink(tempMP3Path, () => {});
     }
   }
 }

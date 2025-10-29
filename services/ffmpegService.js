@@ -34,3 +34,18 @@ export function extractAudio(inputPath, outputPath) {
       .on("error", reject);
   });
 }
+
+export function convertToMP3(inputPath, outputPath, bitrate = "64k") {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .noVideo()
+      .audioCodec("libmp3lame")
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .audioBitrate(bitrate)
+      .format("mp3")
+      .save(outputPath)
+      .on("end", resolve)
+      .on("error", reject);
+  });
+}

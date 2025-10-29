@@ -1,15 +1,107 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import axios from "axios";
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 export default function VideoUploader({ onTranscriptReady, title, setTitle, consultantName, setConsultantName, consultantRating, setConsultantRating, currentTranscriptId }) {
   const [file, setFile] = useState(null);
   const [uploadedId, setUploadedId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [conversionProgress, setConversionProgress] = useState('');
+  const ffmpegRef = useRef(null);
+  const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
     setError(null);
+  };
+
+  const loadFFmpeg = async () => {
+    if (ffmpegRef.current) return ffmpegRef.current;
+    
+    const ffmpeg = new FFmpeg();
+    ffmpegRef.current = ffmpeg;
+    
+    ffmpeg.on('log', ({ message }) => {
+      console.log(message);
+    });
+    
+    ffmpeg.on('progress', ({ progress, time }) => {
+      const percent = (progress * 100).toFixed(0);
+      setConversionProgress(`Converting: ${percent}%`);
+    });
+
+    try {
+      console.log('🔧 Loading FFmpeg...');
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      console.log('✅ FFmpeg loaded');
+      setFfmpegLoaded(true);
+      return ffmpeg;
+    } catch (err) {
+      console.error('❌ Failed to load FFmpeg:', err);
+      throw err;
+    }
+  };
+
+  const convertVideoToMP3 = async (videoFile) => {
+    try {
+      console.log(`🎵 Converting ${videoFile.name} to MP3...`);
+      setConversionProgress('Loading FFmpeg...');
+      
+      const ffmpeg = await loadFFmpeg();
+      
+      setConversionProgress('Reading video file...');
+      const videoData = await fetchFile(videoFile);
+      
+      // Write video to FFmpeg virtual filesystem
+      await ffmpeg.writeFile('input.mp4', videoData);
+      
+      setConversionProgress('Converting to MP3...');
+      // Convert to MP3 with 64kbps bitrate, mono, 16kHz
+      await ffmpeg.exec([
+        '-i', 'input.mp4',
+        '-vn', // No video
+        '-acodec', 'libmp3lame',
+        '-ac', '1', // Mono
+        '-ar', '16000', // 16kHz sample rate
+        '-b:a', '64k', // 64kbps bitrate
+        'output.mp3'
+      ]);
+      
+      setConversionProgress('Reading converted file...');
+      // Read the output MP3
+      const mp3Data = await ffmpeg.readFile('output.mp3');
+      
+      // Clean up
+      await ffmpeg.deleteFile('input.mp4');
+      await ffmpeg.deleteFile('output.mp3');
+      
+      // Create a new File object from the MP3 data
+      const mp3Blob = new Blob([mp3Data.buffer], { type: 'audio/mpeg' });
+      const mp3File = new File(
+        [mp3Blob], 
+        videoFile.name.replace(/\.[^.]+$/, '.mp3'),
+        { type: 'audio/mpeg' }
+      );
+      
+      const originalSizeMB = (videoFile.size / 1024 / 1024).toFixed(1);
+      const mp3SizeMB = (mp3File.size / 1024 / 1024).toFixed(1);
+      const reduction = ((1 - mp3File.size / videoFile.size) * 100).toFixed(0);
+      
+      console.log(`✅ Conversion complete: ${originalSizeMB}MB → ${mp3SizeMB}MB (${reduction}% smaller)`);
+      setConversionProgress('');
+      
+      return mp3File;
+    } catch (err) {
+      console.error('❌ Conversion failed:', err);
+      setConversionProgress('');
+      throw err;
+    }
   };
 
   const handleUpload = async () => {
@@ -27,11 +119,26 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       console.log(`📤 Uploading ${file.name} (${fileSizeMB.toFixed(1)}MB)${useS3Upload ? ' via presigned S3' : ' directly'}...`);
 
       if (useS3Upload) {
+        // Convert to MP3 in browser first to bypass 50MB limit!
+        let fileToUpload = file;
+        
+        if (file.type.startsWith('video/')) {
+          try {
+            setConversionProgress('Starting conversion...');
+            fileToUpload = await convertVideoToMP3(file);
+            console.log(`🎵 Will upload MP3 instead of video`);
+          } catch (conversionError) {
+            console.error('Conversion failed, uploading original file:', conversionError);
+            setError(`⚠️ MP3 conversion failed. Upload may be slower with original video file.`);
+            // Continue with original file if conversion fails
+          }
+        }
+
         // Step 1: Get presigned URL from backend
         console.log("🔗 Getting presigned URL...");
         const presignedResponse = await axios.post("/s3/presigned-url", {
-          fileName: file.name,
-          fileType: file.type
+          fileName: fileToUpload.name,
+          fileType: fileToUpload.type
         });
 
         const { uploadUrl, s3Key } = presignedResponse.data;
@@ -39,22 +146,23 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
         // Step 2: Upload directly to S3
         console.log("📤 Uploading to S3...");
-        await axios.put(uploadUrl, file, {
+        await axios.put(uploadUrl, fileToUpload, {
           headers: {
-            'Content-Type': file.type
+            'Content-Type': fileToUpload.type
           },
           onUploadProgress: (progressEvent) => {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            console.log(`Upload progress: ${percentCompleted}%`);
+            setConversionProgress(`Uploading: ${percentCompleted}%`);
           }
         });
         console.log("✅ Upload to S3 completed");
+        setConversionProgress('');
 
-        // Step 3: Notify backend to process the video from S3
-        console.log("⚙️ Starting video processing...");
+        // Step 3: Notify backend to process the audio from S3
+        console.log("⚙️ Starting audio processing...");
         const processResponse = await axios.post("/upload/process-s3", {
           s3Key: s3Key,
-          originalName: file.name,
+          originalName: file.name, // Use original filename
           consultant_name: consultantName || "",
           consultant_rating: consultantRating
         });
@@ -177,7 +285,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             fontSize: 15
           }}
         >
-          {loading ? "Processing..." : "Upload"}
+          {loading ? (conversionProgress || "Processing...") : "Upload"}
         </button>
         {/* Save button moved to bottom row */}
 

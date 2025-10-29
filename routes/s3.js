@@ -23,10 +23,10 @@ router.post("/presigned-url", async (req, res) => {
       });
     }
 
-    // Validate file type
-    if (!fileType.startsWith('video/')) {
+    // Validate file type - allow both video and audio (for browser-converted MP3)
+    if (!fileType.startsWith('video/') && !fileType.startsWith('audio/')) {
       return res.status(400).json({ 
-        error: "Only video files are allowed" 
+        error: "Only video or audio files are allowed" 
       });
     }
 

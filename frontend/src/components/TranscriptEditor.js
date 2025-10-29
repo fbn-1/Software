@@ -58,6 +58,7 @@ export default function TranscriptEditor({ transcriptId, externalTickers ,extern
   const [chunkContent, setChunkContent] = useState("");
 const [title, setTitle] = useState("");
   const editorRef = useRef(null);
+  const [isPolling, setIsPolling] = useState(false);
 
   
   const [consultantName, setConsultantName] = useState("");
@@ -170,9 +171,38 @@ const [title, setTitle] = useState("");
         // First try the simplified endpoint
   const resp = await axios.get(`/transcripts/${transcriptId}/content`);
         if (resp && Object.prototype.hasOwnProperty.call(resp.data, 'content')) {
-          setChunkContent(resp.data.content || "");
+          const content = resp.data.content || "";
+          setChunkContent(content);
           setTotalPages(1);
           setPage(1);
+          
+          // If still processing, set up auto-refresh to poll every 5 seconds
+          if (content.trim() === "Processing...") {
+            console.log("⏳ Transcript still processing, will check again in 5 seconds...");
+            setIsPolling(true);
+            const pollInterval = setInterval(async () => {
+              try {
+                const checkResp = await axios.get(`/transcripts/${transcriptId}/content`);
+                const checkContent = checkResp?.data?.content || "";
+                
+                if (checkContent.trim() !== "Processing...") {
+                  console.log("✅ Transcript processing complete!");
+                  setChunkContent(checkContent);
+                  setIsPolling(false);
+                  clearInterval(pollInterval);
+                }
+              } catch (err) {
+                console.error("Error polling transcript:", err);
+              }
+            }, 5000); // Poll every 5 seconds
+            
+            // Cleanup interval on unmount or when transcriptId changes
+            return () => {
+              clearInterval(pollInterval);
+              setIsPolling(false);
+            };
+          }
+          
           return;
         }
       } catch (err) {
@@ -661,6 +691,20 @@ const [title, setTitle] = useState("");
       </div>
 
       {/* Transcript editor */}
+      {isPolling && (
+        <div style={{
+          padding: "8px 12px",
+          background: "#fff3cd",
+          border: "1px solid #ffc107",
+          borderRadius: "4px",
+          marginBottom: "10px",
+          fontSize: "14px",
+          color: "#856404",
+          textAlign: "center"
+        }}>
+          ⏳ Transcript is processing... Auto-refreshing every 5 seconds
+        </div>
+      )}
       <div
         ref={editorRef}
         contentEditable
