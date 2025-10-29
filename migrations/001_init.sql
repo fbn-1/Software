@@ -21,6 +21,6 @@ CREATE TABLE IF NOT EXISTS annotations (
   sentiment VARCHAR(16),
   created_at TIMESTAMP DEFAULT now(),
   rating INTEGER,
-  subsectors TEXT,
+  subsector TEXT,
   datatitle TEXT
 );
