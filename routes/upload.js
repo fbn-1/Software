@@ -258,14 +258,55 @@ router.post("/process-s3", async (req, res) => {
     return res.status(400).json({ error: "s3Key and originalName are required" });
   }
 
+  try {
+    console.log(`📥 Starting async processing for ${originalName} from S3 key: ${s3Key}`);
+
+    // Create transcript entry immediately
+    const consultantName = consultant_name || null;
+    const consultantRating = consultant_rating ? Number(consultant_rating) : null;
+
+    const insertRes = await pool.query(
+      `INSERT INTO transcripts (filename, content, created_at, consultant_name, consultant_rating, s3_key)
+       VALUES ($1, $2, NOW(), $3, $4, $5) RETURNING id`,
+      [originalName, 'Processing...', consultantName, consultantRating, s3Key]
+    );
+    const transcriptId = insertRes.rows[0].id;
+
+    // Respond immediately with the transcript ID
+    res.json({ 
+      id: transcriptId,
+      message: "Processing started",
+      status: "processing"
+    });
+
+    // Process asynchronously (don't await)
+    processVideoFromS3(transcriptId, s3Key, originalName).catch(err => {
+      console.error(`❌ Failed to process transcript ${transcriptId}:`, err);
+      pool.query(
+        `UPDATE transcripts SET content = $1 WHERE id = $2`,
+        [`Error processing video: ${err.message}`, transcriptId]
+      ).catch(console.error);
+    });
+
+  } catch (err) {
+    console.error("❌ Error starting S3 video processing:", err);
+    res.status(500).json({ 
+      error: "Error starting video processing",
+      details: err.message 
+    });
+  }
+});
+
+// Async function to process video from S3
+async function processVideoFromS3(transcriptId, s3Key, originalName) {
   const chunksDir = path.join(__dirname, "../chunks");
   const audioDir = path.join(__dirname, "../audio_chunks");
   const tempVideoPath = path.join(__dirname, "../uploads", `temp_${Date.now()}_${originalName}`);
 
   try {
-    console.log(`📥 Downloading ${originalName} from S3 key: ${s3Key}`);
+    console.log(`📥 Downloading ${originalName} from S3 for transcript ${transcriptId}`);
 
-    // Download from S3 to process locally
+    // Download from S3
     const downloadParams = { Bucket: BUCKET_NAME, Key: s3Key };
     const downloadStream = s3.getObject(downloadParams).createReadStream();
     const writeStream = fs.createWriteStream(tempVideoPath);
@@ -277,7 +318,7 @@ router.post("/process-s3", async (req, res) => {
       writeStream.on('close', resolve);
     });
 
-    console.log(`✅ Downloaded for processing: ${tempVideoPath}`);
+    console.log(`✅ Downloaded: ${tempVideoPath}`);
 
     // cleanup/create directories
     if (fs.existsSync(chunksDir)) fs.rmSync(chunksDir, { recursive: true, force: true });
@@ -293,18 +334,6 @@ router.post("/process-s3", async (req, res) => {
       .sort()
       .map(f => path.join(chunksDir, f));
 
-    // read optional consultant metadata
-    const consultantName = consultant_name || null;
-    const consultantRating = consultant_rating ? Number(consultant_rating) : null;
-
-    // create transcript entry
-    const insertRes = await pool.query(
-      `INSERT INTO transcripts (filename, content, created_at, consultant_name, consultant_rating, s3_key)
-       VALUES ($1, '', NOW(), $2, $3, $4) RETURNING id`,
-      [originalName, consultantName, consultantRating, s3Key]
-    );
-    const transcriptId = insertRes.rows[0].id;
-
     const startTime = performance.now(); 
     // Process all chunks in parallel
     const chunkResults = await Promise.all(chunkFiles.map(async (chunkFile, idx) => {
@@ -318,38 +347,27 @@ router.post("/process-s3", async (req, res) => {
       const chunkContent = sentences.join("\n");
    
       const chunkEnd = performance.now();
-      console.log(`⏱️ Chunk ${idx + 1} processed in ${(chunkEnd - chunkStart) / 1000} seconds`);
+      console.log(`⏱️ Transcript ${transcriptId} - Chunk ${idx + 1} processed in ${(chunkEnd - chunkStart) / 1000}s`);
       return chunkContent;
     }));
 
     const fullTranscript = chunkResults.join("\n\n");
     const endTime = performance.now();
-    console.log(`✅ All chunks processed in ${(endTime - startTime) / 1000} seconds`);
+    console.log(`✅ Transcript ${transcriptId} - All chunks processed in ${(endTime - startTime) / 1000}s`);
     
-    // update full transcript in main table
+    // update full transcript in database
     await pool.query(
       `UPDATE transcripts SET content = $1 WHERE id = $2`,
       [fullTranscript.trim(), transcriptId]
     );
-    console.log(`📄 Transcript saved to database`);
+    console.log(`📄 Transcript ${transcriptId} saved to database`);
 
-    res.json({ 
-      transcript: fullTranscript.trim(), 
-      id: transcriptId,
-      message: "Video processed successfully from S3"
-    });
-
-  } catch (err) {
-    console.error("❌ Error processing S3 video:", err);
-    res.status(500).json({ 
-      error: "Error processing video from S3",
-      details: err.message 
-    });
   } finally {
+    // Clean up temp files
     if (fs.existsSync(tempVideoPath)) {
       fs.unlink(tempVideoPath, () => {});
     }
   }
-});
+}
 
 export default router;

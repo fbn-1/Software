@@ -51,7 +51,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         console.log("✅ Upload to S3 completed");
 
         // Step 3: Notify backend to process the video from S3
-        console.log("⚙️ Processing video...");
+        console.log("⚙️ Starting video processing...");
         const processResponse = await axios.post("/upload/process-s3", {
           s3Key: s3Key,
           originalName: file.name,
@@ -62,7 +62,9 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         const id = processResponse.data && processResponse.data.id ? processResponse.data.id : null;
         setUploadedId(id);
         if (onTranscriptReady) onTranscriptReady(id);
-        alert("✅ Video uploaded and transcribed successfully!");
+        
+        // Show success message with processing status
+        alert("✅ Video uploaded successfully!\n\n⚙️ Processing started. The transcript will be available in a few minutes.\n\nYou can check the transcript list to see when it's ready.");
       } else {
         // Small files: upload directly through backend
         const formData = new FormData();
