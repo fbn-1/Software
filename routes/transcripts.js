@@ -76,13 +76,36 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// Update transcript content (auto-save endpoint)
+router.put("/:id/content", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+
+    if (content === undefined || content === null) {
+      return res.status(400).send("Content is required");
+    }
+
+    const result = await pool.query(
+      `UPDATE transcripts SET content = $1 WHERE id = $2 RETURNING *`,
+      [content, id]
+    );
+    
+    if (result.rows.length === 0) return res.status(404).send("Transcript not found");
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Error updating transcript content");
+  }
+});
+
 // 6️⃣ Update transcript metadata (only update when title, consultant_name and consultant_rating are provided)
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { title, consultant_name, consultant_rating } = req.body;
 
-    // Require all three fields to be present (non-empty)
+    // Require all three metadata fields to be present (non-empty)
     if (!title || title.toString().trim() === "" || !consultant_name || consultant_name.toString().trim() === "" || (consultant_rating === undefined || consultant_rating === null || consultant_rating === "")) {
       return res.status(400).send("Require title, consultant_name and consultant_rating to update transcript");
     }

@@ -266,7 +266,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         <span style={{ fontWeight: 600, color: "#007bff", fontSize: 18, marginRight: 8 }}>🎥 Upload Video</span>
         <input
           type="file"
-          accept="video/*"
+          accept="video/*,audio/*"
           onChange={handleFileChange}
           style={{ flex: 1, minWidth: 0, marginRight: 8 }}
         />

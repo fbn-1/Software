@@ -58,6 +58,8 @@ export default function TranscriptEditor({ transcriptId, externalTickers ,extern
   const [chunkContent, setChunkContent] = useState("");
 const [title, setTitle] = useState("");
   const editorRef = useRef(null);
+  const prevChunkContentRef = useRef("");
+  const editedContentCache = useRef({});
   const [isPolling, setIsPolling] = useState(false);
 
   
@@ -80,6 +82,15 @@ const [title, setTitle] = useState("");
       }
     };
     fetchMeta();
+  }, [transcriptId]);
+
+  // Save edited content before switching transcripts
+  useEffect(() => {
+    return () => {
+      if (transcriptId && editorRef.current) {
+        editedContentCache.current[transcriptId] = editorRef.current.innerText;
+      }
+    };
   }, [transcriptId]);
 
   const handleSaveMetadata = async () => {
@@ -360,13 +371,61 @@ const [title, setTitle] = useState("");
     }
   };
 
+  // Auto-save transcript content every 2 seconds
+  useEffect(() => {
+    if (!transcriptId || !editorRef.current) return;
+
+    const autoSaveInterval = setInterval(async () => {
+      if (!editorRef.current) return;
+      
+      const currentContent = editorRef.current.innerText;
+      
+      // Only save if content has changed
+      if (currentContent !== chunkContent) {
+        try {
+          console.log("💾 Auto-saving transcript...");
+          await axios.put(`/transcripts/${transcriptId}/content`, { content: currentContent });
+          
+          // Update local state
+          setChunkContent(currentContent);
+          prevChunkContentRef.current = currentContent;
+          editedContentCache.current[transcriptId] = currentContent;
+          
+          console.log("✅ Auto-saved successfully");
+        } catch (err) {
+          console.error("❌ Auto-save failed:", err);
+        }
+      }
+    }, 30000); // Every 30 seconds
+
+    return () => clearInterval(autoSaveInterval);
+  }, [transcriptId, chunkContent]);
+
   /** Render transcript with highlights */
   useEffect(() => {
     if (!chunkContent) {
       if (editorRef.current) editorRef.current.innerHTML = "";
+      prevChunkContentRef.current = "";
       return;
     }
-    let rendered = chunkContent;
+    
+    // Detect if chunkContent changed (new transcript loaded) or just annotations updated
+    const contentChanged = prevChunkContentRef.current !== chunkContent;
+    
+    // If content changed, check if we have cached edits for this transcript
+    let currentText;
+    if (contentChanged) {
+      const cachedContent = editedContentCache.current[transcriptId];
+      currentText = cachedContent !== undefined ? cachedContent : chunkContent;
+    } else {
+      currentText = editorRef.current?.innerText || chunkContent;
+    }
+    
+    let rendered = currentText;
+    
+    // Update the ref for next comparison
+    prevChunkContentRef.current = chunkContent;
+    
   annotations.forEach(({ id, text, ticker, subsector, sentiment, rating, datatitle }) => {
       const escapedText = text.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
       const regex = new RegExp(escapedText, "g");
@@ -382,7 +441,10 @@ const [title, setTitle] = useState("");
         style="background-color:${colorMap[sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
       >${text}</span>`);
     });
-    if (editorRef.current) editorRef.current.innerHTML = rendered;
+    
+    if (editorRef.current) {
+      editorRef.current.innerHTML = rendered;
+    }
   }, [chunkContent, annotations]);
 
   /** Handle text selection */
