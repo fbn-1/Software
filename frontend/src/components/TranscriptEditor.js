@@ -37,6 +37,56 @@ const colorMap = {
   "--": "#e74c3c"
 };
 
+// Function to get ticker logo URL
+const getTickerLogo = (ticker) => {
+  // Using finnhub logo API
+  return `https://logo.clearbit.com/${getCompanyDomain(ticker)}.com`;
+};
+
+// Map ticker symbols to company domains for logo fetching
+const getCompanyDomain = (ticker) => {
+  const tickerToDomain = {
+    "NVDA": "nvidia",
+    "AMD": "amd",
+    "TSM": "tsmc",
+    "INTC": "intel",
+    "AVGO": "broadcom",
+    "META": "meta",
+    "GOOG": "google",
+    "SNAP": "snap",
+    "NFLX": "netflix",
+    "APP": "apptio",
+    "AMZN": "amazon",
+    "TTD": "thetradedesk",
+    "ROKU": "roku",
+    "RDDT": "reddit",
+    "RBLX": "roblox",
+    "MSFT": "microsoft",
+    "ORCL": "oracle",
+    "FIG": "fig",
+    "SNOW": "snowflake",
+    "TEAM": "atlassian",
+    "FRSH": "freshworks",
+    "GTLB": "gateleap",
+    "MNDY": "monday",
+    "CRM": "salesforce",
+    "NOW": "servicenow",
+    "TWLO": "twilio",
+    "CHKP": "checkpoint",
+    "CRWD": "crowdstrike",
+    "CYRB": "cyberark",
+    "FTNT": "fortinet",
+    "OKTA": "okta",
+    "PANW": "paloaltonetworks",
+    "QLYS": "qualys",
+    "RBRK": "rubrik",
+    "S": "sentinelone",
+    "VRNS": "veracode",
+    "ZS": "zscaler"
+  };
+  return tickerToDomain[ticker] || ticker.toLowerCase();
+};
+
 
 export default function TranscriptEditor({ transcriptId, externalTickers ,externalSubsectors }) {
   const [annotations, setAnnotations] = useState([]);
@@ -651,21 +701,38 @@ const [title, setTitle] = useState("");
       {/* Tickers at top */}
       <div style={{ marginBottom: "10px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: 'center' }}>
         {masterTickers.map((t) => (
-          <span
+          <div
             key={t}
             onClick={() => handleTopTickerClick(t)}
             style={{
-              padding: "5px 10px",
+              padding: "6px 10px",
               border: "1px solid #ccc",
-              borderRadius: "4px",
+              borderRadius: "6px",
               cursor: "pointer",
               background: selectedTickers.includes(t) ? "#007bff" : "#f5f5f5",
               color: selectedTickers.includes(t) ? "white" : "black",
-              fontSize: "14px"
+              fontSize: "14px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              transition: "all 0.2s"
             }}
           >
+            <img
+              src={getTickerLogo(t)}
+              alt={t}
+              style={{
+                width: "20px",
+                height: "20px",
+                borderRadius: "3px",
+                objectFit: "contain"
+              }}
+              onError={(e) => {
+                e.target.style.display = "none";
+              }}
+            />
             {t}
-          </span>
+          </div>
         ))}
 
         {/* Add-ticker '+' chip */}
