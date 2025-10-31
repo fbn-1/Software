@@ -476,21 +476,60 @@ const [title, setTitle] = useState("");
     // Update the ref for next comparison
     prevChunkContentRef.current = chunkContent;
     
-  annotations.forEach(({ id, text, ticker, subsector, sentiment, rating, datatitle }) => {
-      const escapedText = text.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
-      const regex = new RegExp(escapedText, "g");
+    // --- NEW: Offset-based highlighting ---
+    // Sort annotations by start position to handle nesting correctly
+    const sortedAnnotations = [...annotations].sort((a, b) => (a.start_offset || 0) - (b.start_offset || 0));
 
-      const safeDatatitle = datatitle === null || datatitle === undefined ? '' : datatitle;
-      rendered = rendered.replace(regex, `<span 
-        data-id="${id}" 
-        data-tickers="${ticker}" 
-        data-subsectors="${subsector}" 
-        data-datatitle="${safeDatatitle}" 
-        data-sentiment="${sentiment}" 
-        data-rating="${rating}" 
-        style="background-color:${colorMap[sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
-      >${text}</span>`);
+    let lastIndex = 0;
+    const newHtmlParts = [];
+    
+    sortedAnnotations.forEach(ann => {
+      if (ann.start_offset === null || ann.end_offset === null || ann.start_offset === undefined || ann.end_offset === undefined) {
+        // Fallback for old annotations without offsets
+        const escapedText = (ann.text || "").replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+        const regex = new RegExp(escapedText, "g");
+        rendered = rendered.replace(regex, `<span 
+          data-id="${ann.id}" 
+          data-tickers="${ann.ticker}" 
+          data-subsectors="${ann.subsector}" 
+          data-datatitle="${ann.datatitle || ''}" 
+          data-sentiment="${ann.sentiment}" 
+          data-rating="${ann.rating}" 
+          style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
+        >${ann.text}</span>`);
+        return;
+      }
+
+      // Add text before the current annotation
+      if (ann.start_offset > lastIndex) {
+        newHtmlParts.push(currentText.substring(lastIndex, ann.start_offset));
+      }
+
+      // Add the highlighted annotation
+      const highlightedText = currentText.substring(ann.start_offset, ann.end_offset);
+      
+      newHtmlParts.push(
+        `<span 
+          data-id="${ann.id}" 
+          data-tickers="${ann.ticker}" 
+          data-subsectors="${ann.subsector}" 
+          data-datatitle="${ann.datatitle || ''}" 
+          data-sentiment="${ann.sentiment}" 
+          data-rating="${ann.rating}" 
+          style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
+        >${highlightedText}</span>`
+      );
+
+      lastIndex = ann.end_offset;
     });
+
+    // Add any remaining text after the last annotation
+    if (lastIndex < currentText.length) {
+      newHtmlParts.push(currentText.substring(lastIndex));
+    }
+
+    rendered = newHtmlParts.length > 0 ? newHtmlParts.join('') : rendered;
+    // --- END NEW ---
     
     if (editorRef.current) {
       editorRef.current.innerHTML = rendered;
@@ -552,6 +591,19 @@ const [title, setTitle] = useState("");
   const handleSaveAnnotation = async () => {
     if (!selection) return;
 
+    // --- NEW: Calculate absolute offsets ---
+    const range = selection.range;
+    if (!range) {
+      console.error("Cannot save annotation without a range.");
+      return;
+    }
+    const preSelectionRange = document.createRange();
+    preSelectionRange.selectNodeContents(editorRef.current);
+    preSelectionRange.setEnd(range.startContainer, range.startOffset);
+    const startOffset = preSelectionRange.toString().length;
+    const endOffset = startOffset + selection.text.length;
+    // --- END NEW ---
+
     const r = Number(formData.rating);
     const annotationPayload = {
       text: selection.text,
@@ -560,7 +612,9 @@ const [title, setTitle] = useState("");
       datatitle: formData.dataTitle || "",
       sentiment: formData.sentiment,
       rating: Number.isNaN(r) ? null : r,
-      transcript_id: transcriptId
+      transcript_id: transcriptId,
+      start_offset: startOffset, // Send new field
+      end_offset: endOffset,     // Send new field
     };
 
     try {
