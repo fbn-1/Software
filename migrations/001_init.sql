@@ -22,5 +22,6 @@ CREATE TABLE IF NOT EXISTS annotations (
   created_at TIMESTAMP DEFAULT now(),
   rating INTEGER,
   subsector TEXT,
-  datatitle TEXT
+  datatitle TEXT,
+  occurrence INTEGER DEFAULT 1
 );

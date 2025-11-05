@@ -6,7 +6,7 @@ const router = express.Router();
 
 // POST new annotation
 router.post("/", async (req, res) => {
-  const { transcript_id, text, ticker, subsector, datatitle, sentiment, rating, start_offset, end_offset } = req.body;
+  const { transcript_id, text, ticker, subsector, datatitle, sentiment, rating, occurrence } = req.body;
   console.log('POST /annotations', req.body);
   if (!transcript_id || !text || !sentiment) {
     return res.status(400).send("transcript_id, text and sentiment are required");
@@ -20,10 +20,10 @@ router.post("/", async (req, res) => {
   try {
   
     const result = await pool.query(
-      `INSERT INTO annotations (transcript_id, text, ticker, subsector, datatitle, sentiment, rating, created_at, start_offset, end_offset)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
+      `INSERT INTO annotations (transcript_id, text, ticker, subsector, datatitle, sentiment, rating, created_at, occurrence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
        RETURNING *`,
-  [transcript_id, text, ticker, subsector, datatitle || null, sentiment, r, start_offset, end_offset]
+  [transcript_id, text, ticker, subsector, datatitle || null, sentiment, r, occurrence || 1]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -52,7 +52,7 @@ router.get("/:transcriptId", async (req, res) => {
 
 // UPDATE an annotation by ID
 router.put("/:id", async (req, res) => {
-  const { text, ticker, subsector, datatitle, sentiment, rating, start_offset, end_offset } = req.body;
+  const { text, ticker, subsector, datatitle, sentiment, rating, occurrence } = req.body;
   const { id } = req.params;
 
   if (!text || !sentiment) {
@@ -67,10 +67,10 @@ router.put("/:id", async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE annotations
-       SET text = $1, ticker = $2, subsector = $3, datatitle = $4, sentiment = $5, rating = $6, created_at = NOW(), start_offset = $8, end_offset = $9
+       SET text = $1, ticker = $2, subsector = $3, datatitle = $4, sentiment = $5, rating = $6, created_at = NOW(), occurrence = $8
        WHERE id = $7
        RETURNING *`,
-  [text, ticker, subsector, datatitle || null, sentiment, r, id, start_offset, end_offset]
+  [text, ticker, subsector, datatitle || null, sentiment, r, id, occurrence || 1]
     );
 
     if (result.rowCount === 0) {

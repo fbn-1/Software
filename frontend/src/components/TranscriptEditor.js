@@ -109,7 +109,6 @@ export default function TranscriptEditor({ transcriptId, externalTickers ,extern
 const [title, setTitle] = useState("");
   const editorRef = useRef(null);
   const prevChunkContentRef = useRef("");
-  const editedContentCache = useRef({});
   const [isPolling, setIsPolling] = useState(false);
 
   
@@ -132,15 +131,6 @@ const [title, setTitle] = useState("");
       }
     };
     fetchMeta();
-  }, [transcriptId]);
-
-  // Save edited content before switching transcripts
-  useEffect(() => {
-    return () => {
-      if (transcriptId && editorRef.current) {
-        editedContentCache.current[transcriptId] = editorRef.current.innerText;
-      }
-    };
   }, [transcriptId]);
 
   const handleSaveMetadata = async () => {
@@ -421,7 +411,9 @@ const [title, setTitle] = useState("");
     }
   };
 
-  // Auto-save transcript content every 2 seconds
+  // Auto-save transcript content is disabled to provide a stable editing experience.
+  // Content is now saved automatically when an annotation is created, updated, or deleted.
+  /*
   useEffect(() => {
     if (!transcriptId || !editorRef.current) return;
 
@@ -430,13 +422,13 @@ const [title, setTitle] = useState("");
       
       const currentContent = editorRef.current.innerText;
       
-      // Only save if content has changed
+      // Only save if content has changed from the last known saved state
       if (currentContent !== chunkContent) {
         try {
           console.log("💾 Auto-saving transcript...");
           await axios.put(`/transcripts/${transcriptId}/content`, { content: currentContent });
           
-          // Update local state
+          // Update local state, making the typed content the new source of truth
           setChunkContent(currentContent);
           prevChunkContentRef.current = currentContent;
           editedContentCache.current[transcriptId] = currentContent;
@@ -446,90 +438,94 @@ const [title, setTitle] = useState("");
           console.error("❌ Auto-save failed:", err);
         }
       }
-    }, 30000); // Every 30 seconds
+    }, 5000); // Every 5 seconds
 
     return () => clearInterval(autoSaveInterval);
   }, [transcriptId, chunkContent]);
+  */
 
-  /** Render transcript with highlights */
+
+  /** Render transcript with highlights - OCCURRENCE-BASED */
   useEffect(() => {
     if (!chunkContent) {
       if (editorRef.current) editorRef.current.innerHTML = "";
-      prevChunkContentRef.current = "";
       return;
     }
     
-    // Detect if chunkContent changed (new transcript loaded) or just annotations updated
-    const contentChanged = prevChunkContentRef.current !== chunkContent;
+    // Build a map of text -> list of occurrences with their annotations
+    const occurrenceMap = new Map();
     
-    // If content changed, check if we have cached edits for this transcript
-    let currentText;
-    if (contentChanged) {
-      const cachedContent = editedContentCache.current[transcriptId];
-      currentText = cachedContent !== undefined ? cachedContent : chunkContent;
-    } else {
-      currentText = editorRef.current?.innerText || chunkContent;
-    }
-    
-    let rendered = currentText;
-    
-    // Update the ref for next comparison
-    prevChunkContentRef.current = chunkContent;
-    
-    // --- NEW: Offset-based highlighting ---
-    // Sort annotations by start position to handle nesting correctly
-    const sortedAnnotations = [...annotations].sort((a, b) => (a.start_offset || 0) - (b.start_offset || 0));
-
-    let lastIndex = 0;
-    const newHtmlParts = [];
-    
-    sortedAnnotations.forEach(ann => {
-      if (ann.start_offset === null || ann.end_offset === null || ann.start_offset === undefined || ann.end_offset === undefined) {
-        // Fallback for old annotations without offsets
-        const escapedText = (ann.text || "").replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
-        const regex = new RegExp(escapedText, "g");
-        rendered = rendered.replace(regex, `<span 
-          data-id="${ann.id}" 
-          data-tickers="${ann.ticker}" 
-          data-subsectors="${ann.subsector}" 
-          data-datatitle="${ann.datatitle || ''}" 
-          data-sentiment="${ann.sentiment}" 
-          data-rating="${ann.rating}" 
-          style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
-        >${ann.text}</span>`);
-        return;
-      }
-
-      // Add text before the current annotation
-      if (ann.start_offset > lastIndex) {
-        newHtmlParts.push(currentText.substring(lastIndex, ann.start_offset));
-      }
-
-      // Add the highlighted annotation
-      const highlightedText = currentText.substring(ann.start_offset, ann.end_offset);
+    annotations.forEach(ann => {
+      if (!ann.text) return;
       
-      newHtmlParts.push(
-        `<span 
-          data-id="${ann.id}" 
-          data-tickers="${ann.ticker}" 
-          data-subsectors="${ann.subsector}" 
-          data-datatitle="${ann.datatitle || ''}" 
-          data-sentiment="${ann.sentiment}" 
-          data-rating="${ann.rating}" 
-          style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
-        >${highlightedText}</span>`
-      );
-
-      lastIndex = ann.end_offset;
+      if (!occurrenceMap.has(ann.text)) {
+        occurrenceMap.set(ann.text, []);
+      }
+      
+      occurrenceMap.get(ann.text).push({
+        id: ann.id,
+        occurrenceIndex: ann.occurrence || 1, // Use occurrence from database
+        ticker: ann.ticker,
+        subsector: ann.subsector,
+        datatitle: ann.datatitle,
+        sentiment: ann.sentiment,
+        rating: ann.rating,
+        text: ann.text
+      });
     });
 
-    // Add any remaining text after the last annotation
-    if (lastIndex < currentText.length) {
-      newHtmlParts.push(currentText.substring(lastIndex));
-    }
+    let rendered = chunkContent;
 
-    rendered = newHtmlParts.length > 0 ? newHtmlParts.join('') : rendered;
-    // --- END NEW ---
+    // Process each unique text
+    occurrenceMap.forEach((annList, searchText) => {
+      // Sort by occurrence index
+      annList.sort((a, b) => a.occurrenceIndex - b.occurrenceIndex);
+      
+      // Find all occurrences of this text in the content
+      const occurrences = [];
+      let searchIndex = 0;
+      while (true) {
+        const index = rendered.indexOf(searchText, searchIndex);
+        if (index === -1) break;
+        occurrences.push({ index, text: searchText });
+        searchIndex = index + 1;
+      }
+
+      // Replace each occurrence with highlighted version
+      // Work backwards to avoid messing up indices
+      for (let i = annList.length - 1; i >= 0; i--) {
+        const ann = annList[i];
+        const occIndex = ann.occurrenceIndex - 1; // Convert to 0-based
+        
+        if (occIndex >= 0 && occIndex < occurrences.length) {
+          const occ = occurrences[occIndex];
+          const safeDatatitle = ann.datatitle === null || ann.datatitle === undefined ? '' : ann.datatitle;
+          
+          const before = rendered.substring(0, occ.index);
+          const after = rendered.substring(occ.index + searchText.length);
+          
+          const highlighted = `<span 
+            data-id="${ann.id}" 
+            data-occurrence="${ann.occurrenceIndex}"
+            data-text="${ann.text}"
+            data-tickers="${ann.ticker}" 
+            data-subsectors="${ann.subsector}" 
+            data-datatitle="${safeDatatitle}" 
+            data-sentiment="${ann.sentiment}" 
+            data-rating="${ann.rating}" 
+            style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
+          >${searchText}</span>`;
+          
+          rendered = before + highlighted + after;
+          
+          // Update all subsequent occurrences' indices to account for the HTML we added
+          const addedLength = highlighted.length - searchText.length;
+          for (let j = occIndex + 1; j < occurrences.length; j++) {
+            occurrences[j].index += addedLength;
+          }
+        }
+      }
+    });
     
     if (editorRef.current) {
       editorRef.current.innerHTML = rendered;
@@ -560,12 +556,16 @@ const [title, setTitle] = useState("");
     const span = e.target.closest("span[data-id]");
     console.log('span', span);
     if (!span) return;
-    const id = parseInt(span.dataset.id);
+    const id = parseInt(span.dataset.id, 10);
+    
+    // Find the full annotation object to get occurrence index
+    const annotation = annotations.find(a => a.id === id);
+    if (!annotation) return;
+
     const tickers = span.dataset.tickers ? span.dataset.tickers.split(",") : [];
-  const subsectors = span.dataset.subsectors ? span.dataset.subsectors.split(",") : [];
-  const datatitle = span.dataset.datatitle || "";
+    const subsectors = span.dataset.subsectors ? span.dataset.subsectors.split(",").filter(s => s) : [];
+    const datatitle = span.dataset.datatitle || "";
     const sentiment = span.dataset.sentiment || "=";
-    // parse rating safely (handle strings, null, empty)
     let rating = 5;
     const rawRating = span.dataset.rating;
     if (rawRating !== undefined && rawRating !== null && rawRating !== "") {
@@ -576,7 +576,8 @@ const [title, setTitle] = useState("");
     }
     const text = span.innerText;
 
-  setSelection({ text, range: null });
+  // Store occurrence index for editing
+  setSelection({ text, range: null, occurrence: annotation.occurrence });
   setFormData({ tickers, subsectors, dataTitle: datatitle || "", sentiment, rating });
     setEditingAnnotationId(id);
 
@@ -591,18 +592,54 @@ const [title, setTitle] = useState("");
   const handleSaveAnnotation = async () => {
     if (!selection) return;
 
-    // --- NEW: Calculate absolute offsets ---
-    const range = selection.range;
-    if (!range) {
-      console.error("Cannot save annotation without a range.");
+    // Save current editor content
+    const currentContent = editorRef.current.innerText;
+    try {
+      console.log("💾 Saving content before annotation...");
+      await axios.put(`/transcripts/${transcriptId}/content`, { content: currentContent });
+      setChunkContent(currentContent);
+    } catch (err) {
+      console.error("❌ Failed to save content before annotation:", err);
+      alert("Could not save transcript changes. Please try again.");
       return;
     }
-    const preSelectionRange = document.createRange();
-    preSelectionRange.selectNodeContents(editorRef.current);
-    preSelectionRange.setEnd(range.startContainer, range.startOffset);
-    const startOffset = preSelectionRange.toString().length;
-    const endOffset = startOffset + selection.text.length;
-    // --- END NEW ---
+
+    // Calculate occurrence index for this annotation
+    let occurrence;
+
+    if (editingAnnotationId) {
+      // If editing, keep the same occurrence index
+      const existingAnn = annotations.find(a => a.id === editingAnnotationId);
+      occurrence = existingAnn ? existingAnn.occurrence : 1;
+    } else {
+      // For new annotation, calculate which occurrence this is
+      const selectedText = selection.text;
+      
+      // Find the character position of the selection
+      let charPosition;
+      if (selection.range) {
+        const range = selection.range;
+        const preSelectionRange = document.createRange();
+        preSelectionRange.selectNodeContents(editorRef.current);
+        preSelectionRange.setEnd(range.startContainer, range.startOffset);
+        charPosition = preSelectionRange.toString().length;
+      } else {
+        charPosition = 0;
+      }
+
+      // Count how many times this text appears before the selection
+      let count = 0;
+      let searchIndex = 0;
+      while (searchIndex <= charPosition) {
+        const index = currentContent.indexOf(selectedText, searchIndex);
+        if (index === -1 || index > charPosition) break;
+        count++;
+        if (index === charPosition) break; // Found our occurrence
+        searchIndex = index + 1;
+      }
+
+      occurrence = count; // This is the Nth occurrence (1-based)
+    }
 
     const r = Number(formData.rating);
     const annotationPayload = {
@@ -613,8 +650,7 @@ const [title, setTitle] = useState("");
       sentiment: formData.sentiment,
       rating: Number.isNaN(r) ? null : r,
       transcript_id: transcriptId,
-      start_offset: startOffset, // Send new field
-      end_offset: endOffset,     // Send new field
+      occurrence: occurrence, // Occurrence index (1-based)
     };
 
     try {
@@ -625,10 +661,6 @@ const [title, setTitle] = useState("");
   const resp = await axios.post(`/annotations`, annotationPayload);
         console.log('POST /annotations response', resp.data);
       }
-
-      // Do NOT overwrite chunkContent with editor innerText here.
-      // Overwriting with innerText strips HTML which removes the highlight spans/styles.
-      // We rely on re-fetching annotations and re-rendering highlights from `chunkContent` + `annotations`.
 
       const updated = await fetchAnnotations();
       if (updated) setAnnotations(updated);
@@ -648,9 +680,16 @@ const [title, setTitle] = useState("");
     const ok = window.confirm("Delete this annotation? This will remove the highlight and delete it from the database.");
     if (!ok) return;
     try {
+      // --- NEW: Save current editor content before deleting the annotation ---
+      const currentContent = editorRef.current.innerText;
+      console.log("💾 Saving content before deleting annotation...");
+      await axios.put(`/transcripts/${transcriptId}/content`, { content: currentContent });
+      setChunkContent(currentContent);
+      // --- END NEW ---
+
       // optimistic UI: remove locally
       setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
-  await axios.delete(`/annotations/${annotationId}`);
+      await axios.delete(`/annotations/${annotationId}`);
     } catch (err) {
       console.error(err);
       alert("Failed to delete annotation. Refreshing annotations.");
