@@ -505,6 +505,7 @@ const [title, setTitle] = useState("");
           const after = rendered.substring(occ.index + searchText.length);
           
           const highlighted = `<span 
+            contenteditable="false"
             data-id="${ann.id}" 
             data-occurrence="${ann.occurrenceIndex}"
             data-text="${ann.text}"
@@ -513,7 +514,7 @@ const [title, setTitle] = useState("");
             data-datatitle="${safeDatatitle}" 
             data-sentiment="${ann.sentiment}" 
             data-rating="${ann.rating}" 
-            style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
+            style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;user-select:none;"
           >${searchText}</span>`;
           
           rendered = before + highlighted + after;
@@ -539,17 +540,43 @@ const [title, setTitle] = useState("");
       setShowPopup(false);
       return;
     }
+    
     const text = sel.toString();
-    if (text.trim()) {
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-
-      setSelection({ text, range });
-      setPopupPosition({ top: rect.bottom + window.scrollY + 5, left: rect.left + window.scrollX });
-      setShowPopup(true);
-      setFormData((prev) => ({ ...prev, tickers: [], subsectors: [] }));
-      setEditingAnnotationId(null);
+    if (!text.trim()) return;
+    
+    const range = sel.getRangeAt(0);
+    
+    // Check if the selection contains any already-highlighted spans
+    const container = range.commonAncestorContainer;
+    let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+    
+    // Check if selection is inside or contains any annotation span
+    let insideAnnotation = false;
+    
+    // Check if clicked inside an annotation span
+    if (node.closest && node.closest('span[data-id]')) {
+      insideAnnotation = true;
     }
+    
+    // Check if range contains any annotation spans
+    const fragment = range.cloneContents();
+    if (fragment.querySelector && fragment.querySelector('span[data-id]')) {
+      insideAnnotation = true;
+    }
+    
+    if (insideAnnotation) {
+      alert("❌ Cannot create annotation: This text is already highlighted. Click the highlight to edit it.");
+      sel.removeAllRanges();
+      setShowPopup(false);
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    setSelection({ text, range });
+    setPopupPosition({ top: rect.bottom + window.scrollY + 5, left: rect.left + window.scrollX });
+    setShowPopup(true);
+    setFormData((prev) => ({ ...prev, tickers: [], subsectors: [] }));
+    setEditingAnnotationId(null);
   };
   /** Handle click on existing annotation */
     const handleAnnotationClick = (e) => {
@@ -933,6 +960,45 @@ const [title, setTitle] = useState("");
         suppressContentEditableWarning={true}
         onMouseUp={handleMouseUp}
         onClick={handleAnnotationClick}
+        onKeyDown={(e) => {
+          // Prevent typing/deleting inside highlighted spans
+          const sel = window.getSelection();
+          if (!sel || !sel.rangeCount) return;
+          
+          const range = sel.getRangeAt(0);
+          const node = range.startContainer.nodeType === Node.TEXT_NODE 
+            ? range.startContainer.parentNode 
+            : range.startContainer;
+          
+          // Check if cursor is inside a highlighted span
+          const highlightedSpan = node.closest('span[data-id]');
+          if (highlightedSpan) {
+            // Allow only specific keys
+            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Tab'];
+            if (!allowedKeys.includes(e.key)) {
+              e.preventDefault();
+              alert("❌ Cannot edit highlighted text. Click the highlight to modify the annotation.");
+              return false;
+            }
+          }
+        }}
+        onPaste={(e) => {
+          // Prevent pasting inside highlighted spans
+          const sel = window.getSelection();
+          if (!sel || !sel.rangeCount) return;
+          
+          const range = sel.getRangeAt(0);
+          const node = range.startContainer.nodeType === Node.TEXT_NODE 
+            ? range.startContainer.parentNode 
+            : range.startContainer;
+          
+          const highlightedSpan = node.closest('span[data-id]');
+          if (highlightedSpan) {
+            e.preventDefault();
+            alert("❌ Cannot paste inside highlighted text.");
+            return false;
+          }
+        }}
         style={{
           width: "100%",
           maxWidth: "100%",
