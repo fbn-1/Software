@@ -115,6 +115,16 @@ const [title, setTitle] = useState("");
   const [consultantName, setConsultantName] = useState("");
   const [consultantRating, setConsultantRating] = useState(null);
 
+  // Handler for Data Title input
+  const handleDataTitleChange = (e) => {
+    console.log('Data Title changing to:', e.target.value);
+    setFormData(prev => {
+      const updated = { ...prev, dataTitle: e.target.value };
+      console.log('Updated formData:', updated);
+      return updated;
+    });
+  };
+
   // Restore selection to keep it blue while interacting with popup
   const restoreSelection = useCallback(() => {
     if (!selection?.range || !showPopup) return;
@@ -141,6 +151,10 @@ const [title, setTitle] = useState("");
     if (!popupEl) return;
 
     const ensureSelection = (e) => {
+      // Don't restore selection if user is typing in an input field
+      if (e.target.tagName === 'INPUT' && e.target.type === 'text') {
+        return;
+      }
       // Always restore selection after any interaction
       setTimeout(() => restoreSelection(), 10);
     };
@@ -148,13 +162,11 @@ const [title, setTitle] = useState("");
     popupEl.addEventListener("mousedown", ensureSelection);
     popupEl.addEventListener("click", ensureSelection);
     popupEl.addEventListener("change", ensureSelection);
-    popupEl.addEventListener("input", ensureSelection);
 
     return () => {
       popupEl.removeEventListener("mousedown", ensureSelection);
       popupEl.removeEventListener("click", ensureSelection);
       popupEl.removeEventListener("change", ensureSelection);
-      popupEl.removeEventListener("input", ensureSelection);
     };
   }, [showPopup, restoreSelection]);
 
@@ -1043,6 +1055,8 @@ const [title, setTitle] = useState("");
       {showPopup && (
         <div
           ref={popupRef}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
           style={{
             position: "absolute",
             top: "50%",
@@ -1070,8 +1084,15 @@ const [title, setTitle] = useState("");
             <input
               type="text"
               value={formData.dataTitle || ''}
-              onChange={(e) => setFormData(prev => ({ ...prev, dataTitle: e.target.value }))}
+              onChange={handleDataTitleChange}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onFocus={(e) => {
+                console.log('Data Title input focused');
+                e.stopPropagation();
+              }}
               placeholder="Enter title"
+              autoComplete="off"
               style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
             />
           </div>
