@@ -1,11 +1,10 @@
 // src/components/TranscriptList.js
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-export default function TranscriptList({ onSelectTranscript, onTickersLoaded, onSubsectorsLoaded }) {
+export default function TranscriptList({ onSelectTranscript, onTickersLoaded, onSubsectorsLoaded, isOpen, onToggle }) {
   const [transcripts, setTranscripts] = useState([]);
   const [error, setError] = useState(null);
-  const [isOpen, setIsOpen] = useState(false);
 
   const fetchSavedTranscripts = async () => {
     try {
@@ -18,16 +17,12 @@ export default function TranscriptList({ onSelectTranscript, onTickersLoaded, on
     }
   };
 
-  const toggleList = async () => {
-    if (!isOpen) {
-      // opening: fetch transcripts and show
-      await fetchSavedTranscripts();
-      setIsOpen(true);
-    } else {
-      // closing: hide list
-      setIsOpen(false);
+  // Fetch transcripts when isOpen becomes true
+  useEffect(() => {
+    if (isOpen) {
+      fetchSavedTranscripts();
     }
-  };
+  }, [isOpen]);
 
   const deleteTranscript = async (id) => {
     try {
@@ -77,8 +72,24 @@ export default function TranscriptList({ onSelectTranscript, onTickersLoaded, on
 
   return (
     <div style={{ marginTop: "20px" }}>
-      <h2>📜 Saved Transcripts</h2>
-      <button onClick={toggleList}>{isOpen ? '▾ Hide Saved Transcripts' : '📥 Load Saved Transcripts'}</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+        <h2 style={{ margin: 0 }}>📜 Saved Transcripts</h2>
+        <button 
+          onClick={onToggle}
+          style={{
+            padding: "6px 12px",
+            background: "#6c757d",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontWeight: 500,
+            fontSize: 14
+          }}
+        >
+          {isOpen ? '▾ Hide' : '▸ Show'}
+        </button>
+      </div>
       {isOpen && (
         <>
           {error && <p style={{ color: "red" }}>{error}</p>}

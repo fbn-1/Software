@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from "react";
 import VideoUploader from "./components/VideoUploader";
 import TranscriptEditor from "./components/TranscriptEditor";
-import TranscriptList from "./components/TranscriptList";
 
 function App() {
   const [transcriptId, setTranscriptId] = useState(null);
@@ -46,8 +45,10 @@ function App() {
         consultantRating={consultantRating}
         setConsultantRating={setConsultantRating}
         currentTranscriptId={transcriptId}
+        onLoadTranscript={setTranscriptId}
+        onTickersLoaded={setSharedTickers}
+        onSubsectorsLoaded={setSharedSubsectors}
       />
-      <TranscriptList onSelectTranscript={setTranscriptId} onTickersLoaded={setSharedTickers} onSubsectorsLoaded={setSharedSubsectors} />
       {transcriptId ? (
         <TranscriptEditor transcriptId={transcriptId} externalTickers={sharedTickers} externalSubsectors={sharedSubsectors} />
       ) : (

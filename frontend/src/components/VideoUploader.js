@@ -1,9 +1,9 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-export default function VideoUploader({ onTranscriptReady, title, setTitle, consultantName, setConsultantName, consultantRating, setConsultantRating, currentTranscriptId }) {
+export default function VideoUploader({ onTranscriptReady, title, setTitle, consultantName, setConsultantName, consultantRating, setConsultantRating, currentTranscriptId, onLoadTranscript, onTickersLoaded, onSubsectorsLoaded }) {
   const [file, setFile] = useState(null);
   const [uploadedId, setUploadedId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -11,10 +11,109 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
   const [conversionProgress, setConversionProgress] = useState('');
   const ffmpegRef = useRef(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [transcripts, setTranscripts] = useState([]);
+  const [loadingTranscripts, setLoadingTranscripts] = useState(false);
+  const dropdownRef = useRef(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const fileInputRef = useRef(null);
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-    setError(null);
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setError(null);
+      // Automatically start upload after file is selected
+      handleUploadWithFile(selectedFile);
+    }
+  };
+
+  const handleUploadButtonClick = () => {
+    // Trigger file picker
+    fileInputRef.current?.click();
+  };
+
+  const fetchSavedTranscripts = async () => {
+    setLoadingTranscripts(true);
+    try {
+      const response = await axios.get("/transcripts");
+      setTranscripts(response.data || []);
+    } catch (err) {
+      console.error('Error fetching transcripts:', err);
+      setTranscripts([]);
+    } finally {
+      setLoadingTranscripts(false);
+    }
+  };
+
+  const handleLoadSavedClick = async () => {
+    if (!showDropdown) {
+      await fetchSavedTranscripts();
+    }
+    setShowDropdown(!showDropdown);
+  };
+
+  const handleSelectTranscript = async (transcript) => {
+    try {
+      if (onLoadTranscript) onLoadTranscript(transcript.id);
+      
+      // Fetch annotations and extract tickers/subsectors
+      const annRes = await axios.get(`/annotations/${transcript.id}`);
+      const ann = annRes.data || [];
+      
+      const tickerSet = new Set();
+      ann.forEach(a => {
+        if (a.ticker) {
+          a.ticker.split(',').forEach(t => {
+            const tclean = t.trim();
+            if (tclean) tickerSet.add(tclean.toUpperCase());
+          });
+        }
+      });
+      const tickers = Array.from(tickerSet).sort();
+      if (onTickersLoaded) onTickersLoaded(tickers);
+
+      const subsectorSet = new Set();
+      ann.forEach(a => {
+        if (a.subsector) {
+          a.subsector.split(',').forEach(t => {
+            const tclean = t.trim();
+            if (tclean) subsectorSet.add(tclean.toUpperCase());
+          });
+        }
+      });
+      const subsectors = Array.from(subsectorSet).sort();
+      if (onSubsectorsLoaded) onSubsectorsLoaded(subsectors);
+      
+      setShowDropdown(false);
+    } catch (err) {
+      console.error('Failed to load transcript', err);
+    }
+  };
+
+  const deleteTranscript = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this transcript?')) return;
+    
+    try {
+      await axios.delete(`/transcripts/${id}`);
+      setTranscripts(transcripts.filter((t) => t.id !== id));
+    } catch (err) {
+      console.error('Error deleting transcript:', err);
+      alert('Failed to delete transcript');
+    }
   };
 
   const loadFFmpeg = async () => {
@@ -106,26 +205,31 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
   const handleUpload = async () => {
     if (!file) return;
+    await handleUploadWithFile(file);
+  };
+
+  const handleUploadWithFile = async (fileToUpload) => {
+    if (!fileToUpload) return;
     setLoading(true);
     setError(null);
 
     try {
-      const fileSizeMB = file.size / (1024 * 1024);
+      const fileSizeMB = fileToUpload.size / (1024 * 1024);
       
       // Always use presigned S3 upload for production (Render) or files > 50MB
       const isProduction = window.location.hostname.includes('onrender.com');
       const useS3Upload = isProduction || fileSizeMB > 50;
       
-      console.log(`📤 Uploading ${file.name} (${fileSizeMB.toFixed(1)}MB)${useS3Upload ? ' via presigned S3' : ' directly'}...`);
+      console.log(`📤 Uploading ${fileToUpload.name} (${fileSizeMB.toFixed(1)}MB)${useS3Upload ? ' via presigned S3' : ' directly'}...`);
 
       if (useS3Upload) {
         // Convert to MP3 in browser first to bypass 50MB limit!
-        let fileToUpload = file;
+        let fileForUpload = fileToUpload;
         
-        if (file.type.startsWith('video/')) {
+        if (fileToUpload.type.startsWith('video/')) {
           try {
             setConversionProgress('Starting conversion...');
-            fileToUpload = await convertVideoToMP3(file);
+            fileForUpload = await convertVideoToMP3(fileToUpload);
             console.log(`🎵 Will upload MP3 instead of video`);
           } catch (conversionError) {
             console.error('Conversion failed, uploading original file:', conversionError);
@@ -137,8 +241,8 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         // Step 1: Get presigned URL from backend
         console.log("🔗 Getting presigned URL...");
         const presignedResponse = await axios.post("/s3/presigned-url", {
-          fileName: fileToUpload.name,
-          fileType: fileToUpload.type
+          fileName: fileForUpload.name,
+          fileType: fileForUpload.type
         });
 
         const { uploadUrl, s3Key } = presignedResponse.data;
@@ -146,9 +250,9 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
         // Step 2: Upload directly to S3
         console.log("📤 Uploading to S3...");
-        await axios.put(uploadUrl, fileToUpload, {
+        await axios.put(uploadUrl, fileForUpload, {
           headers: {
-            'Content-Type': fileToUpload.type
+            'Content-Type': fileForUpload.type
           },
           onUploadProgress: (progressEvent) => {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -162,7 +266,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         console.log("⚙️ Starting audio processing...");
         const processResponse = await axios.post("/upload/process-s3", {
           s3Key: s3Key,
-          originalName: file.name, // Use original filename
+          originalName: fileToUpload.name, // Use original filename
           consultant_name: consultantName || "",
           consultant_rating: consultantRating
         });
@@ -176,7 +280,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       } else {
         // Small files: upload directly through backend
         const formData = new FormData();
-        formData.append("video", file);
+        formData.append("video", fileToUpload);
         formData.append("consultant_name", consultantName || "");
         if (consultantRating !== null && consultantRating !== undefined && String(consultantRating).trim() !== "") {
           formData.append("consultant_rating", String(consultantRating));
@@ -261,19 +365,142 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       flexDirection: "column",
       gap: 10
     }}>
-      {/* Top row: upload label, file chooser, upload button and error */}
+      {/* Top row: upload label, load saved button with dropdown, upload file button and error */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
-        <span style={{ fontWeight: 600, color: "#007bff", fontSize: 18, marginRight: 8 }}>🎥 Upload Video</span>
+        <span style={{ fontWeight: 600, color: "#080808ff", fontSize: 18, marginRight: 8 }}>Datapoint Creator</span>
+        
+        {/* Hidden file input */}
         <input
+          ref={fileInputRef}
           type="file"
           accept="video/*,audio/*"
           onChange={handleFileChange}
-          style={{ flex: 1, minWidth: 0, marginRight: 8 }}
+          style={{ display: 'none' }}
         />
 
+        {/* Show selected file name if a file is selected */}
+        {file && !loading && (
+          <span style={{ 
+            flex: 1, 
+            color: '#666', 
+            fontSize: '14px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
+            Selected: {file.name}
+          </span>
+        )}
+        
+        {loading && (
+          <span style={{ 
+            flex: 1, 
+            color: '#007bff', 
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            {conversionProgress || "Processing..."}
+          </span>
+        )}
+
+        {!file && !loading && <div style={{ flex: 1 }} />}
+
+        <div ref={dropdownRef} style={{ position: 'relative' }}>
+          <button
+            onClick={handleLoadSavedClick}
+            disabled={loading}
+            style={{
+              padding: "7px 18px",
+              background: loading ? "#ccc" : "#17a2b8",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 600,
+              fontSize: 15,
+              whiteSpace: "nowrap"
+            }}
+          >
+           Load Saved Templates {showDropdown ? '▴' : '▾'}
+          </button>
+
+          {showDropdown && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: '4px',
+              backgroundColor: 'white',
+              border: '1px solid #c4c3c3ff',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              minWidth: '400px',
+              maxHeight: '400px',
+              overflowY: 'auto'
+            }}>
+              {loadingTranscripts ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: '#666' }}>
+                  Loading transcripts...
+                </div>
+              ) : transcripts.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: '#666' }}>
+                  No saved transcripts found
+                </div>
+              ) : (
+                <div>
+                  {transcripts.map((t) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        padding: '12px 16px',
+                        borderBottom: '1px solid #f0f0f0',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                      onClick={() => handleSelectTranscript(t)}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                          {t.filename || t.title || 'Untitled'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          {t.created_at ? new Date(t.created_at).toLocaleString() : ''}
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => deleteTranscript(t.id, e)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          fontSize: '18px',
+                          padding: '4px 8px',
+                          borderRadius: '4px'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#fee2e2'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        title="Delete transcript"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <button
-          onClick={handleUpload}
-          disabled={!file || loading}
+          onClick={handleUploadButtonClick}
+          disabled={loading}
           style={{
             padding: "7px 18px",
             background: loading ? "#ccc" : "#007bff",
@@ -282,12 +509,12 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             borderRadius: "4px",
             cursor: loading ? "not-allowed" : "pointer",
             fontWeight: 600,
-            fontSize: 15
+            fontSize: 15,
+            whiteSpace: "nowrap"
           }}
         >
-          {loading ? (conversionProgress || "Processing...") : "Upload"}
+          ☁️ Upload File
         </button>
-        {/* Save button moved to bottom row */}
 
         {error && <span style={{ color: "red", marginLeft: 8, fontSize: 14 }}>{error}</span>}
       </div>

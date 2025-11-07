@@ -1,5 +1,5 @@
 // src/components/TranscriptEditor.js
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import axios from "axios";
 
 const DUMMY_TICKERS = [
@@ -114,6 +114,49 @@ const [title, setTitle] = useState("");
   
   const [consultantName, setConsultantName] = useState("");
   const [consultantRating, setConsultantRating] = useState(null);
+
+  // Restore selection to keep it blue while interacting with popup
+  const restoreSelection = useCallback(() => {
+    if (!selection?.range || !showPopup) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    try {
+      sel.removeAllRanges();
+      sel.addRange(selection.range);
+    } catch (err) {
+      console.error("Failed to restore selection", err);
+    }
+  }, [selection, showPopup]);
+
+  // Restore selection when popup opens
+  useEffect(() => {
+    if (!showPopup) return;
+    restoreSelection();
+  }, [showPopup, restoreSelection]);
+
+  // Keep selection visible during all popup interactions
+  useEffect(() => {
+    if (!showPopup) return;
+    const popupEl = popupRef.current;
+    if (!popupEl) return;
+
+    const ensureSelection = (e) => {
+      // Always restore selection after any interaction
+      setTimeout(() => restoreSelection(), 10);
+    };
+
+    popupEl.addEventListener("mousedown", ensureSelection);
+    popupEl.addEventListener("click", ensureSelection);
+    popupEl.addEventListener("change", ensureSelection);
+    popupEl.addEventListener("input", ensureSelection);
+
+    return () => {
+      popupEl.removeEventListener("mousedown", ensureSelection);
+      popupEl.removeEventListener("click", ensureSelection);
+      popupEl.removeEventListener("change", ensureSelection);
+      popupEl.removeEventListener("input", ensureSelection);
+    };
+  }, [showPopup, restoreSelection]);
 
   // Fetch transcript metadata when a transcript is selected
   useEffect(() => {
@@ -505,7 +548,6 @@ const [title, setTitle] = useState("");
           const after = rendered.substring(occ.index + searchText.length);
           
           const highlighted = `<span 
-            contenteditable="false"
             data-id="${ann.id}" 
             data-occurrence="${ann.occurrenceIndex}"
             data-text="${ann.text}"
@@ -514,7 +556,8 @@ const [title, setTitle] = useState("");
             data-datatitle="${safeDatatitle}" 
             data-sentiment="${ann.sentiment}" 
             data-rating="${ann.rating}" 
-            style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;user-select:none;"
+            contenteditable="false"
+            style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
           >${searchText}</span>`;
           
           rendered = before + highlighted + after;
@@ -540,39 +583,47 @@ const [title, setTitle] = useState("");
       setShowPopup(false);
       return;
     }
-    
     const text = sel.toString();
-    if (!text.trim()) return;
-    
+    if (!text.trim()) {
+      setShowPopup(false);
+      return;
+    }
+
     const range = sel.getRangeAt(0);
-    
-    // Check if the selection contains any already-highlighted spans
-    const container = range.commonAncestorContainer;
-    let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
-    
-    // Check if selection is inside or contains any annotation span
-    let insideAnnotation = false;
-    
-    // Check if clicked inside an annotation span
-    if (node.closest && node.closest('span[data-id]')) {
-      insideAnnotation = true;
+
+    const normalizeNode = (node) => {
+      if (!node) return null;
+      return node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    };
+
+    const startNode = normalizeNode(range.startContainer);
+    const endNode = normalizeNode(range.endContainer);
+
+    const startInHighlight = startNode?.closest?.('span[data-id]');
+    const endInHighlight = endNode?.closest?.('span[data-id]');
+
+    let containsHighlight = false;
+    try {
+      const fragment = range.cloneContents();
+      if (fragment.querySelector?.('span[data-id]')) {
+        containsHighlight = true;
+      }
+    } catch (err) {
+      // If cloning fails for some reason, fall back to disallowing selection
+      containsHighlight = true;
     }
-    
-    // Check if range contains any annotation spans
-    const fragment = range.cloneContents();
-    if (fragment.querySelector && fragment.querySelector('span[data-id]')) {
-      insideAnnotation = true;
-    }
-    
-    if (insideAnnotation) {
-      alert("❌ Cannot create annotation: This text is already highlighted. Click the highlight to edit it.");
+
+    if (startInHighlight || endInHighlight || containsHighlight) {
       sel.removeAllRanges();
+      setSelection(null);
       setShowPopup(false);
       return;
     }
 
     const rect = range.getBoundingClientRect();
-    setSelection({ text, range });
+
+  const preservedRange = range.cloneRange();
+  setSelection({ text, range: preservedRange });
     setPopupPosition({ top: rect.bottom + window.scrollY + 5, left: rect.left + window.scrollX });
     setShowPopup(true);
     setFormData((prev) => ({ ...prev, tickers: [], subsectors: [] }));
@@ -603,8 +654,16 @@ const [title, setTitle] = useState("");
     }
     const text = span.innerText;
 
+    let annotationRange = null;
+    try {
+      annotationRange = document.createRange();
+      annotationRange.selectNodeContents(span);
+    } catch (err) {
+      annotationRange = null;
+    }
+
   // Store occurrence index for editing
-  setSelection({ text, range: null, occurrence: annotation.occurrence });
+  setSelection({ text, range: annotationRange, occurrence: annotation.occurrence });
   setFormData({ tickers, subsectors, dataTitle: datatitle || "", sentiment, rating });
     setEditingAnnotationId(id);
 
@@ -960,45 +1019,6 @@ const [title, setTitle] = useState("");
         suppressContentEditableWarning={true}
         onMouseUp={handleMouseUp}
         onClick={handleAnnotationClick}
-        onKeyDown={(e) => {
-          // Prevent typing/deleting inside highlighted spans
-          const sel = window.getSelection();
-          if (!sel || !sel.rangeCount) return;
-          
-          const range = sel.getRangeAt(0);
-          const node = range.startContainer.nodeType === Node.TEXT_NODE 
-            ? range.startContainer.parentNode 
-            : range.startContainer;
-          
-          // Check if cursor is inside a highlighted span
-          const highlightedSpan = node.closest('span[data-id]');
-          if (highlightedSpan) {
-            // Allow only specific keys
-            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Tab'];
-            if (!allowedKeys.includes(e.key)) {
-              e.preventDefault();
-              alert("❌ Cannot edit highlighted text. Click the highlight to modify the annotation.");
-              return false;
-            }
-          }
-        }}
-        onPaste={(e) => {
-          // Prevent pasting inside highlighted spans
-          const sel = window.getSelection();
-          if (!sel || !sel.rangeCount) return;
-          
-          const range = sel.getRangeAt(0);
-          const node = range.startContainer.nodeType === Node.TEXT_NODE 
-            ? range.startContainer.parentNode 
-            : range.startContainer;
-          
-          const highlightedSpan = node.closest('span[data-id]');
-          if (highlightedSpan) {
-            e.preventDefault();
-            alert("❌ Cannot paste inside highlighted text.");
-            return false;
-          }
-        }}
         style={{
           width: "100%",
           maxWidth: "100%",
@@ -1024,7 +1044,7 @@ const [title, setTitle] = useState("");
         <div
           ref={popupRef}
           style={{
-            position: "absolute", // place relative to the parent container (which is position: relative)
+            position: "absolute",
             top: "50%",
             right: "-400px",
             transform: "translateY(-50%)",
