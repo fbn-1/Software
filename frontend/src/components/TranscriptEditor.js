@@ -39,7 +39,7 @@ const colorMap = {
 
 // Function to get ticker logo URL
 const getTickerLogo = (ticker) => {
-  // Using finnhub logo API
+
   return `https://logo.clearbit.com/${getCompanyDomain(ticker)}.com`;
 };
 
@@ -885,11 +885,9 @@ const [title, setTitle] = useState("");
 
 
   return (
-    <div style={{ marginTop: 20, position: "relative" }}>
-    
+    <div style={{ marginTop: 0, position: "relative" }}>
       {/* Metadata moved to VideoUploader; no inputs here anymore */}
-         <h3>TICKERS</h3>
-      {/* Tickers at top */}
+      <h5 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px", marginTop: "2px" }}>TICKERS</h5>    
       <div style={{ marginBottom: "10px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: 'center' }}>
         {masterTickers.map((t) => (
           <div
@@ -902,7 +900,7 @@ const [title, setTitle] = useState("");
               cursor: "pointer",
               background: selectedTickers.includes(t) ? "#007bff" : "#f5f5f5",
               color: selectedTickers.includes(t) ? "white" : "black",
-              fontSize: "14px",
+              fontSize: "12px",
               display: "flex",
               alignItems: "center",
               gap: "6px",
@@ -913,8 +911,8 @@ const [title, setTitle] = useState("");
               src={getTickerLogo(t)}
               alt={t}
               style={{
-                width: "20px",
-                height: "20px",
+                width: "15px",
+                height: "15px",
                 borderRadius: "3px",
                 objectFit: "contain"
               }}
@@ -989,7 +987,7 @@ const [title, setTitle] = useState("");
       </div>
 
       {/* Subsector chips */}
-      <h3>SUBSECTORS</h3>
+      <h5 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px", marginTop: "2px" }}>SUBSECTORS</h5>
       <div style={{ marginBottom: "10px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
         {masterSubsectors.map((s) => (
           <span
@@ -1032,8 +1030,8 @@ const [title, setTitle] = useState("");
         onMouseUp={handleMouseUp}
         onClick={handleAnnotationClick}
         style={{
-          width: "100%",
-          maxWidth: "100%",
+          width: "calc(100% - 350px)",
+          maxWidth: "calc(100% - 350px)",
           height: "calc(100vh - 320px)",
           minHeight: "320px",
           maxHeight: "calc(100vh - 320px)",
@@ -1042,10 +1040,10 @@ const [title, setTitle] = useState("");
           borderRadius: "6px",
           whiteSpace: "pre-wrap",
           overflowWrap: "break-word",
-          background: chunkContent ? "#fff" : "#f8d7da",
+          background: "#fff",
           overflowY: "auto",
           boxSizing: "border-box",
-          margin: "0 auto"
+          marginRight: "350px"
         }}
       />
 
@@ -1060,7 +1058,7 @@ const [title, setTitle] = useState("");
           style={{
             position: "absolute",
             top: "50%",
-            right: "-400px",
+            right: "20px",
             transform: "translateY(-50%)",
             background: "#fff",
             border: "1.5px solid #007bff",

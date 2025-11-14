@@ -20,6 +20,7 @@ export const useTranscriptMetadata = (transcriptId) => {
       try {
         const res = await axios.get(`/transcripts/${transcriptId}`);
         const meta = res.data || {};
+        console.log('111');
         setTitle(meta.filename || meta.title || "");
         setConsultantName(meta.consultant_name || "");
         setConsultantRating(meta.consultant_rating || null);

@@ -353,12 +353,12 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
   return (
     <div style={{
-      marginTop: "10px",
-      marginBottom: "18px",
-      padding: "6px 16px",
-      background: "#f8f9fa",
+      marginTop: "1px",
+      marginBottom: "1px",
+      padding: "6px 2px",
+      // background: "#f8f9fa",
       borderRadius: "6px",
-      boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+      // boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
       width: "100%",
       boxSizing: "border-box",
       display: "flex",
@@ -388,7 +388,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap'
           }}>
-            Selected: {file.name}
+            {/* Selected: {file.name} */}
           </span>
         )}
         
@@ -411,9 +411,9 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             disabled={loading}
             style={{
               padding: "7px 18px",
-              background: loading ? "#ccc" : "#17a2b8",
-              color: "white",
-              border: "none",
+              background: loading ? "#ccc" : "#f6f6f7ff",
+              color: "black",
+              border: "1px solid black",
               borderRadius: "4px",
               cursor: loading ? "not-allowed" : "pointer",
               fontWeight: 600,
@@ -526,7 +526,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
           placeholder="Call Title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          style={{ width: 420, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+          style={{ width: 520, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
         />
 
         <input
@@ -534,16 +534,16 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
           placeholder="Consultant name"
           value={consultantName}
           onChange={(e) => setConsultantName(e.target.value)}
-          style={{ width: 200, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+          style={{ width: 620, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
         />
         <select
           value={consultantRating === null ? "" : String(consultantRating)}
           onChange={(e) => setConsultantRating(e.target.value === "" ? null : Number(e.target.value))}
-          style={{ width: 110, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+          style={{ width:410, padding: "6px 8px", borderRadius: 4,textAlign: "center", fontWeight:700 ,  border: "1px solid #ddd" }}
         >
           <option value="">Select rating</option>
           {Array.from({ length: 21 }, (_, i) => (i * 0.5)).map((v) => (
-            <option key={v} value={String(v)}>
+            <option key={v} value={String(v)} >
               {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
             </option>
           ))}
@@ -560,6 +560,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
               cursor: "pointer",
               fontWeight: 600,
               fontSize: 14,
+              width: 140,
             }}
           >
             Save

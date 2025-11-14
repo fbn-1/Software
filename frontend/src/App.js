@@ -35,7 +35,7 @@ function App() {
   }, [transcriptId]);
 
   return (
-    <div style={{ padding: "20px", maxWidth: "900px", margin: "0 auto" }}>
+    <div style={{ padding: "10px 100px", width: "100%", boxSizing: "border-box" }}>
       <VideoUploader
         onTranscriptReady={handleTranscriptReady}
         title={title}
@@ -49,13 +49,21 @@ function App() {
         onTickersLoaded={setSharedTickers}
         onSubsectorsLoaded={setSharedSubsectors}
       />
-      {transcriptId ? (
-        <TranscriptEditor transcriptId={transcriptId} externalTickers={sharedTickers} externalSubsectors={sharedSubsectors} />
-      ) : (
-        <p style={{ color: '#666', marginTop: 12 }}>Load a saved transcript or upload a new one to begin.</p>
-      )}
+      <div style={{ width: "100%" }}>
+        {transcriptId && (
+          <TranscriptEditor transcriptId={transcriptId} externalTickers={sharedTickers} externalSubsectors={sharedSubsectors} />
+        )}
+        {!transcriptId && (
+          <p style={{ color: '#666', marginTop: "1px" }}>Load a saved transcript or upload a new one to begin.</p>
+        )}
+      </div>
+                             
+                                 
+
+
     </div>
   );
 }
+
 
 export default App;
