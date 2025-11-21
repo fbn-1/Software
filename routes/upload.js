@@ -64,15 +64,14 @@ router.post("/", upload.single("video"), async (req, res) => {
     // Delete full MP3 to save space
     fs.unlink(tempMP3Path, () => {});
 
-    // read optional consultant metadata from multipart form (multer puts non-file fields on req.body)
-    const consultantName = req.body.consultant_name || null;
-    const consultantRating = req.body.consultant_rating ? Number(req.body.consultant_rating) : null;
+    // read optional consultant IDs from multipart form
+    const consultantIds = req.body.consultant_ids ? JSON.parse(req.body.consultant_ids) : null;
 
-    // create transcript entry (save consultant metadata if provided)
+    // create transcript entry (save consultant IDs if provided)
     const insertRes = await pool.query(
-      `INSERT INTO transcripts (filename, content, created_at, consultant_name, consultant_rating)
-       VALUES ($1, '', NOW(), $2, $3) RETURNING id`,
-      [originalName, consultantName, consultantRating]
+      `INSERT INTO transcripts (filename, content, created_at, consultant_ids)
+       VALUES ($1, '', NOW(), $2) RETURNING id`,
+      [originalName, consultantIds]
     );
     const transcriptId = insertRes.rows[0].id;
 
@@ -238,15 +237,14 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
     // Delete full MP3 to save space
     fs.unlink(tempMP3Path, () => {});
 
-    // read optional consultant metadata from multipart form
-    const consultantName = req.body.consultant_name || null;
-    const consultantRating = req.body.consultant_rating ? Number(req.body.consultant_rating) : null;
+    // read optional consultant IDs from multipart form
+    const consultantIds = req.body.consultant_ids ? JSON.parse(req.body.consultant_ids) : null;
 
-    // create transcript entry (save consultant metadata and S3 key)
+    // create transcript entry (save consultant IDs and S3 key)
     const insertRes = await pool.query(
-      `INSERT INTO transcripts (filename, content, created_at, consultant_name, consultant_rating, s3_key)
-       VALUES ($1, '', NOW(), $2, $3, $4) RETURNING id`,
-      [originalName, consultantName, consultantRating, s3Key]
+      `INSERT INTO transcripts (filename, content, created_at, consultant_ids, s3_key)
+       VALUES ($1, '', NOW(), $2, $3) RETURNING id`,
+      [originalName, consultantIds, s3Key]
     );
     const transcriptId = insertRes.rows[0].id;
 
@@ -320,7 +318,7 @@ router.post("/large", uploadToMemory.single("video"), async (req, res) => {
 
 // Process video from S3 (after presigned upload)
 router.post("/process-s3", async (req, res) => {
-  const { s3Key, originalName, consultant_name, consultant_rating } = req.body;
+  const { s3Key, originalName, consultant_ids } = req.body;
 
   if (!s3Key || !originalName) {
     return res.status(400).json({ error: "s3Key and originalName are required" });
@@ -330,13 +328,12 @@ router.post("/process-s3", async (req, res) => {
     console.log(`📥 Starting async processing for ${originalName} from S3 key: ${s3Key}`);
 
     // Create transcript entry immediately
-    const consultantName = consultant_name || null;
-    const consultantRating = consultant_rating ? Number(consultant_rating) : null;
+    const consultantIdsArray = consultant_ids || null;
 
     const insertRes = await pool.query(
-      `INSERT INTO transcripts (filename, content, created_at, consultant_name, consultant_rating, s3_key)
-       VALUES ($1, $2, NOW(), $3, $4, $5) RETURNING id`,
-      [originalName, 'Processing...', consultantName, consultantRating, s3Key]
+      `INSERT INTO transcripts (filename, content, created_at, consultant_ids, s3_key)
+       VALUES ($1, $2, NOW(), $3, $4) RETURNING id`,
+      [originalName, 'Processing...', consultantIdsArray, s3Key]
     );
     const transcriptId = insertRes.rows[0].id;
 

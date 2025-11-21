@@ -88,7 +88,7 @@ const getCompanyDomain = (ticker) => {
 };
 
 
-export default function TranscriptEditor({ transcriptId, externalTickers ,externalSubsectors }) {
+export default function TranscriptEditor({ transcriptId, externalTickers, externalSubsectors, consultants }) {
   const [annotations, setAnnotations] = useState([]);
   const [selection, setSelection] = useState(null);
   const [showPopup, setShowPopup] = useState(false);
@@ -110,6 +110,10 @@ const [title, setTitle] = useState("");
   const editorRef = useRef(null);
   const prevChunkContentRef = useRef("");
   const [isPolling, setIsPolling] = useState(false);
+  const [speakers, setSpeakers] = useState([]);
+  const [summary, setSummary] = useState("");
+  const [rawContent, setRawContent] = useState("");
+  const [showRawTranscript, setShowRawTranscript] = useState(false);
 
   
   const [consultantName, setConsultantName] = useState("");
@@ -279,6 +283,9 @@ const [title, setTitle] = useState("");
         if (resp && Object.prototype.hasOwnProperty.call(resp.data, 'content')) {
           const content = resp.data.content || "";
           setChunkContent(content);
+          setSpeakers(resp.data.speakers || []);
+          setSummary(resp.data.summary || "");
+          setRawContent(resp.data.rawContent || "");
           setTotalPages(1);
           setPage(1);
           
@@ -362,9 +369,12 @@ const [title, setTitle] = useState("");
       const headerLines = [];
       if (metadata) {
         const t = metadata.filename || metadata.title || "(no title)";
-        const cn = metadata.consultant_name || "(no consultant)";
-        const cr = metadata.consultant_rating !== undefined && metadata.consultant_rating !== null ? metadata.consultant_rating : "(no rating)";
-        headerLines.push(`[Title: ${t}] [Consultant: ${cn}] [Rating: ${cr}] `);
+       
+        // Get consultant names and ratings from props
+        const consultantInfo = consultants && consultants.length > 0
+          ? consultants.map(c => `${c.firstName} ${c.lastName} (${c.rating !== null && c.rating !== undefined ? c.rating : 'N/A'})`).join(', ')
+          : "(no consultant)";
+        headerLines.push(`[Title: ${t}] [Consultants: ${consultantInfo}]`);
       }
 
       // Use freshest annotations returned by fetchAnnotations (falls back to state)
@@ -502,7 +512,10 @@ const [title, setTitle] = useState("");
 
   /** Render transcript with highlights - OCCURRENCE-BASED */
   useEffect(() => {
-    if (!chunkContent) {
+    // Use raw or cleaned content based on toggle
+    const displayContent = showRawTranscript ? rawContent : chunkContent;
+    
+    if (!displayContent) {
       if (editorRef.current) editorRef.current.innerHTML = "";
       return;
     }
@@ -887,6 +900,78 @@ const [title, setTitle] = useState("");
   return (
     <div style={{ marginTop: 0, position: "relative" }}>
       {/* Metadata moved to VideoUploader; no inputs here anymore */}
+      
+      {/* Speaker Information Panel */}
+      {speakers.length > 0 && (
+        <div style={{
+          marginBottom: '16px',
+          padding: '12px 16px',
+          background: 'linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%)',
+          borderRadius: '8px',
+          border: '1px solid #b8daff',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#004085' }}>
+              🎤 Identified Speakers ({speakers.length})
+            </h4>
+            {rawContent && (
+              <button
+                onClick={() => setShowRawTranscript(!showRawTranscript)}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  background: showRawTranscript ? '#007bff' : '#fff',
+                  color: showRawTranscript ? '#fff' : '#007bff',
+                  border: '1px solid #007bff',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500
+                }}
+              >
+                {showRawTranscript ? 'Show Cleaned' : 'Show Raw'}
+              </button>
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: summary ? '12px' : 0 }}>
+            {speakers.map((speaker, idx) => (
+              <div key={idx} style={{ 
+                padding: '6px 12px',
+                background: '#fff',
+                border: '1px solid #b8daff',
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: '#004085',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <span style={{ fontWeight: 600 }}>{speaker.label}</span>
+                {speaker.estimatedTurns > 0 && (
+                  <span style={{ color: '#6c757d', fontSize: '11px' }}>
+                    ({speaker.estimatedTurns} turns)
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          
+          {summary && (
+            <div style={{ 
+              marginTop: '12px', 
+              paddingTop: '12px', 
+              borderTop: '1px solid #b8daff' 
+            }}>
+              <strong style={{ fontSize: '12px', color: '#004085' }}>📝 Summary:</strong>
+              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#004085', lineHeight: '1.5' }}>
+                {summary}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+      
       <h5 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px", marginTop: "2px" }}>TICKERS</h5>    
       <div style={{ marginBottom: "10px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: 'center' }}>
         {masterTickers.map((t) => (
@@ -1020,7 +1105,7 @@ const [title, setTitle] = useState("");
           color: "#856404",
           textAlign: "center"
         }}>
-          ⏳ Transcript is processing... Auto-refreshing every 5 seconds
+          ⏳ Transcript is processing...
         </div>
       )}
       <div

@@ -47,14 +47,14 @@ router.get("/:id/content", async (req, res) => {
 // 4️⃣ Save transcript manually (optional)
 router.post("/", async (req, res) => {
   try {
-    const { filename, content, lines, consultant_name, consultant_rating } = req.body;
+    const { filename, content, lines, consultant_ids } = req.body;
     const text = content ?? (Array.isArray(lines) ? lines.join("\n") : "");
 
     if (!text || text.trim() === "") return res.status(400).send("No transcript content provided");
 
     const insert = await pool.query(
-      "INSERT INTO transcripts (filename, content, consultant_name, consultant_rating) VALUES ($1, $2, $3, $4) RETURNING id, filename, created_at",
-      [filename ?? "untitled", text, consultant_name ?? null, consultant_rating ?? null]
+      "INSERT INTO transcripts (filename, content, consultant_ids) VALUES ($1, $2, $3) RETURNING id, filename, created_at",
+      [filename ?? "untitled", text, consultant_ids ?? null]
     );
 
     res.json({ id: insert.rows[0].id, filename: insert.rows[0].filename, created_at: insert.rows[0].created_at });
@@ -99,26 +99,32 @@ router.put("/:id/content", async (req, res) => {
   }
 });
 
-// 6️⃣ Update transcript metadata (only update when title, consultant_name and consultant_rating are provided)
+// 6️⃣ Update transcript metadata
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, consultant_name, consultant_rating } = req.body;
+    const { title, consultant_ids } = req.body;
 
-    // Require all three metadata fields to be present (non-empty)
-    if (!title || title.toString().trim() === "" || !consultant_name || consultant_name.toString().trim() === "" || (consultant_rating === undefined || consultant_rating === null || consultant_rating === "")) {
-      return res.status(400).send("Require title, consultant_name and consultant_rating to update transcript");
+    // Require title
+    if (!title || title.toString().trim() === "") {
+      return res.status(400).send("Title is required");
     }
 
-    const ratingNum = Number(consultant_rating);
-    if (Number.isNaN(ratingNum)) {
-      return res.status(400).send("consultant_rating must be a number");
+    // Build update query based on what's provided
+    let query = `UPDATE transcripts SET filename = $1`;
+    let params = [title];
+    let paramIndex = 2;
+
+    if (consultant_ids !== undefined) {
+      query += `, consultant_ids = $${paramIndex}`;
+      params.push(consultant_ids);
+      paramIndex++;
     }
 
-    const result = await pool.query(
-      `UPDATE transcripts SET filename = $1, consultant_name = $2, consultant_rating = $3 WHERE id = $4 RETURNING *`,
-      [title, consultant_name, ratingNum, id]
-    );
+    query += ` WHERE id = $${paramIndex} RETURNING *`;
+    params.push(id);
+
+    const result = await pool.query(query, params);
 
     if (result.rows.length === 0) return res.status(404).send("Transcript not found");
     res.json(result.rows[0]);

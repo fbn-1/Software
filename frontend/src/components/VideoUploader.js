@@ -3,7 +3,7 @@ import axios from "axios";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-export default function VideoUploader({ onTranscriptReady, title, setTitle, consultantName, setConsultantName, consultantRating, setConsultantRating, currentTranscriptId, onLoadTranscript, onTickersLoaded, onSubsectorsLoaded }) {
+export default function VideoUploader({ onTranscriptReady, title, setTitle, consultants, setConsultants, currentTranscriptId, onLoadTranscript, onTickersLoaded, onSubsectorsLoaded }) {
   const [file, setFile] = useState(null);
   const [uploadedId, setUploadedId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15,12 +15,24 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
   const [transcripts, setTranscripts] = useState([]);
   const [loadingTranscripts, setLoadingTranscripts] = useState(false);
   const dropdownRef = useRef(null);
+  
+  // User search and selection
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [activeConsultantIndex, setActiveConsultantIndex] = useState(null);
+  const userSearchRef = useRef(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowDropdown(false);
+      }
+      if (userSearchRef.current && !userSearchRef.current.contains(event.target)) {
+        setShowUserDropdown(false);
+        setSearchResults([]);
+        setActiveConsultantIndex(null);
       }
     };
     
@@ -29,6 +41,64 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
   }, []);
 
   const fileInputRef = useRef(null);
+
+  // Search users
+  const searchUsers = async (query) => {
+    if (!query || query.trim() === '') {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const response = await axios.get(`/users/search?q=${encodeURIComponent(query)}`);
+      setSearchResults(response.data || []);
+    } catch (err) {
+      console.error('Error searching users:', err);
+      setSearchResults([]);
+    }
+  };
+
+  // Create new user
+  const createUser = async (firstName, lastName, rating, person_identity = null) => {
+    try {
+      const response = await axios.post('/users', {
+        first_name: firstName,
+        last_name: lastName,
+        rating: rating,
+        person_identity: person_identity
+      });
+      return response.data;
+    } catch (err) {
+      if (err.response?.status === 409) {
+        alert('A user with this identity already exists');
+      } else {
+        console.error('Error creating user:', err);
+        alert('Failed to create user');
+      }
+      return null;
+    }
+  };
+
+  // Handle user selection from dropdown
+  const handleSelectUser = (user, consultantIndex) => {
+    // console.log('Selected user:', user);
+    // console.log('User rating:', user.rating, 'Type:', typeof user.rating);
+    const updated = [...consultants];
+    // Convert rating to number to ensure consistent formatting
+    const ratingValue = user.rating !== null && user.rating !== undefined ? Number(user.rating) : null;
+    updated[consultantIndex] = {
+      user_id: user.user_id,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      rating: ratingValue,
+      person_identity: user.person_identity
+    };
+    console.log('Updated consultant:', updated[consultantIndex]);
+    setConsultants(updated);
+    setShowUserDropdown(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setActiveConsultantIndex(null);
+  };
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -264,11 +334,11 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
         // Step 3: Notify backend to process the audio from S3
         console.log("⚙️ Starting audio processing...");
+        const userIds = consultants.map(c => c.user_id).filter(id => id);
         const processResponse = await axios.post("/upload/process-s3", {
           s3Key: s3Key,
           originalName: fileToUpload.name, // Use original filename
-          consultant_name: consultantName || "",
-          consultant_rating: consultantRating
+          consultant_ids: userIds.length > 0 ? userIds : null
         });
 
         const id = processResponse.data && processResponse.data.id ? processResponse.data.id : null;
@@ -281,9 +351,9 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         // Small files: upload directly through backend
         const formData = new FormData();
         formData.append("video", fileToUpload);
-        formData.append("consultant_name", consultantName || "");
-        if (consultantRating !== null && consultantRating !== undefined && String(consultantRating).trim() !== "") {
-          formData.append("consultant_rating", String(consultantRating));
+        const userIds = consultants.map(c => c.user_id).filter(id => id);
+        if (userIds.length > 0) {
+          formData.append("consultant_ids", JSON.stringify(userIds));
         }
         formData.append("title", title || "");
 
@@ -328,8 +398,15 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
     // Validate required fields are filled (not blank)
     const missing = [];
     if (!title || title.toString().trim() === "") missing.push("Title");
-    if (!consultantName || consultantName.toString().trim() === "") missing.push("Consultant name");
-    if (consultantRating === undefined || consultantRating === null || String(consultantRating).trim() === "") missing.push("Consultant rating");
+    if (consultants.length === 0) {
+      missing.push("At least one consultant");
+    } else {
+      consultants.forEach((c, idx) => {
+        if (!c.firstName || c.firstName.trim() === "") missing.push(`Consultant ${idx + 1} first name`);
+        if (!c.lastName || c.lastName.trim() === "") missing.push(`Consultant ${idx + 1} last name`);
+        if (c.rating === undefined || c.rating === null || String(c.rating).trim() === "") missing.push(`Consultant ${idx + 1} rating`);
+      });
+    }
 
     if (missing.length > 0) {
       alert(`Please fill the following fields before saving: ${missing.join(', ')}`);
@@ -337,14 +414,47 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
     }
 
     try {
+      // First, create/update users and collect their IDs
+      const userIds = [];
+      for (const consultant of consultants) {
+        if (consultant.user_id) {
+          // Existing user - update if needed
+          await axios.put(`/users/${consultant.user_id}`, {
+            first_name: consultant.firstName,
+            last_name: consultant.lastName,
+            rating: consultant.rating,
+            person_identity: consultant.person_identity
+          });
+          userIds.push(consultant.user_id);
+        } else {
+          // New user - create
+          const newUser = await createUser(
+            consultant.firstName,
+            consultant.lastName,
+            consultant.rating,
+            consultant.person_identity
+          );
+          if (newUser) {
+            userIds.push(newUser.user_id);
+            // Update consultant object with new user_id
+            consultant.user_id = newUser.user_id;
+          }
+        }
+      }
+
+      // Update transcript metadata with consultant IDs
       const payload = {
         title: title,
-        consultant_name: consultantName,
-        consultant_rating: consultantRating
+        consultant_ids: userIds.length > 0 ? userIds : null
       };
+      await axios.put(`/transcripts/${idToUpdate}`, payload);
 
-      const res = await axios.put(`/transcripts/${idToUpdate}`, payload);
-      alert(`✅ Updated transcript ${res.data.id}`);
+      // Link consultants to transcript via junction table
+      await axios.post(`/users/transcript/${idToUpdate}/consultants`, {
+        user_ids: userIds
+      });
+
+      alert(`✅ Updated transcript ${idToUpdate}`);
     } catch (err) {
       console.error(err);
       alert("❌ Failed to update metadata. See console.");
@@ -519,35 +629,15 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         {error && <span style={{ color: "red", marginLeft: 8, fontSize: 14 }}>{error}</span>}
       </div>
 
-      {/* Bottom row: Title, Consultant name and rating */}
+      {/* Title row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
         <input
           type="text"
           placeholder="Call Title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          style={{ width: 520, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+          style={{ flex: 1, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
         />
-
-        <input
-          type="text"
-          placeholder="Consultant name"
-          value={consultantName}
-          onChange={(e) => setConsultantName(e.target.value)}
-          style={{ width: 620, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
-        />
-        <select
-          value={consultantRating === null ? "" : String(consultantRating)}
-          onChange={(e) => setConsultantRating(e.target.value === "" ? null : Number(e.target.value))}
-          style={{ width:410, padding: "6px 8px", borderRadius: 4,textAlign: "center", fontWeight:700 ,  border: "1px solid #ddd" }}
-        >
-          <option value="">Select rating</option>
-          {Array.from({ length: 21 }, (_, i) => (i * 0.5)).map((v) => (
-            <option key={v} value={String(v)} >
-              {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
-            </option>
-          ))}
-        </select>
         <div style={{ marginLeft: 'auto' }}>
           <button
             onClick={handleSaveMetadata}
@@ -566,6 +656,186 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             Save
           </button>
         </div>
+      </div>
+
+      {/* Consultants section */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+
+
+        {consultants.map((consultant, index) => (
+          <div key={index} style={{ position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+              <div style={{ position: 'relative', width: 250 }}>
+                <input
+                  type="text"
+                  placeholder="First name"
+                  value={consultant.firstName}
+                  onChange={(e) => {
+                    const updated = [...consultants];
+                    updated[index].firstName = e.target.value;
+                    setConsultants(updated);
+                    setSearchQuery(e.target.value);
+                    searchUsers(e.target.value);
+                    setActiveConsultantIndex(index);
+                    setShowUserDropdown(true);
+                  }}
+                  onFocus={() => {
+                    setActiveConsultantIndex(index);
+                    if (consultant.firstName) {
+                      setSearchQuery(consultant.firstName);
+                      searchUsers(consultant.firstName);
+                      setShowUserDropdown(true);
+                    }
+                  }}
+                  style={{ width: '100%', padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+                />
+                {consultant.user_id && (
+                  <span style={{ 
+                    position: 'absolute', 
+                    right: 8, 
+                    top: '50%', 
+                    transform: 'translateY(-50%)', 
+                    color: '#28a745', 
+                    fontSize: 12,
+                    pointerEvents: 'none'
+                  }}>✓</span>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="Last name"
+                value={consultant.lastName}
+                onChange={(e) => {
+                  const updated = [...consultants];
+                  updated[index].lastName = e.target.value;
+                  setConsultants(updated);
+                }}
+                style={{ width: 250, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+              />
+              <input
+                type="text"
+                placeholder="Identity (optional)"
+                value={consultant.person_identity || ''}
+                onChange={(e) => {
+                  const updated = [...consultants];
+                  updated[index].person_identity = e.target.value;
+                  setConsultants(updated);
+                }}
+                style={{ width: 150, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+              />
+              <select
+                value={
+                  consultant.rating === null || consultant.rating === undefined 
+                    ? "" 
+                    : typeof consultant.rating === 'number' 
+                      ? (consultant.rating % 1 === 0 ? consultant.rating.toFixed(0) : consultant.rating.toFixed(1))
+                      : String(consultant.rating)
+                }
+                onChange={(e) => {
+                  const updated = [...consultants];
+                  updated[index].rating = e.target.value === "" ? null : Number(e.target.value);
+                  setConsultants(updated);
+                }}
+                style={{ width: 120, padding: "6px 8px", borderRadius: 4, textAlign: "center", fontWeight: 700, border: "1px solid #ddd" }}
+              >
+                <option value="">Rating</option>
+                {Array.from({ length: 21 }, (_, i) => (i * 0.5)).map((v) => (
+                  <option key={v} value={v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}>
+                    {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
+                  </option>
+                ))}
+              </select>
+              {consultants.length > 1 && (
+                <button
+                  onClick={() => {
+                    const updated = consultants.filter((_, i) => i !== index);
+                    setConsultants(updated);
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    background: "#dc3545",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 14,
+                  }}
+                  title="Remove consultant"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            
+            {/* User search dropdown */}
+            {showUserDropdown && activeConsultantIndex === index && searchResults.length > 0 && (
+              <div 
+                ref={userSearchRef}
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '4px',
+                  backgroundColor: 'white',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  zIndex: 1000,
+                  maxWidth: '500px',
+                  maxHeight: '200px',
+                  overflowY: 'auto'
+                }}
+              >
+                {searchResults.map((user) => (
+                  <div
+                    key={user.user_id}
+                    onClick={() => handleSelectUser(user, index)}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #f0f0f0',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>
+                      {user.first_name} {user.last_name}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666' }}>
+                      {user.person_identity && `ID: ${user.person_identity} • `}
+                      Rating: {user.rating !== null && user.rating !== undefined ? user.rating : 'N/A'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        
+        {/* Add consultant button */}
+        <button
+          onClick={() => {
+            setConsultants([...consultants, { firstName: '', lastName: '', rating: null }]);
+          }}
+          style={{
+            padding: "6px 12px",
+            background: "#007bff",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: 14,
+            width: 'fit-content',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+        >
+          <span style={{ fontSize: 16 }}>+</span> Add Consultant
+        </button>
       </div>
     </div>
   );

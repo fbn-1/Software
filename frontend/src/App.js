@@ -8,8 +8,7 @@ function App() {
   const [sharedTickers, setSharedTickers] = useState([]);
   const [sharedSubsectors, setSharedSubsectors] = useState([]);
   const [title, setTitle] = useState("");
-  const [consultantName, setConsultantName] = useState("");
-  const [consultantRating, setConsultantRating] = useState(null);
+  const [consultants, setConsultants] = useState([]);
 
   // Receive transcriptId from uploader
   const handleTranscriptReady = (id) => {
@@ -25,8 +24,28 @@ function App() {
         if (!res.ok) return;
         const meta = await res.json();
         setTitle(meta.title || meta.filename || "");
-        setConsultantName(meta.consultant_name || "");
-        setConsultantRating(meta.consultant_rating === null || meta.consultant_rating === undefined ? null : meta.consultant_rating);
+        
+        // Fetch consultants from the users table via transcript_consultants junction
+        try {
+          const consultantsRes = await fetch(`/users/transcript/${transcriptId}`);
+          if (consultantsRes.ok) {
+            const consultantsData = await consultantsRes.json();
+            // Map database users to frontend format
+            const mappedConsultants = consultantsData.map(u => ({
+              user_id: u.user_id,
+              firstName: u.first_name,
+              lastName: u.last_name,
+              rating: u.rating,
+              person_identity: u.person_identity
+            }));
+            setConsultants(mappedConsultants);
+          } else {
+            setConsultants([]);
+          }
+        } catch (err) {
+          console.error('Failed to fetch consultants', err);
+          setConsultants([]);
+        }
       } catch (err) {
         console.error('Failed to fetch transcript metadata', err);
       }
@@ -40,10 +59,8 @@ function App() {
         onTranscriptReady={handleTranscriptReady}
         title={title}
         setTitle={setTitle}
-        consultantName={consultantName}
-        setConsultantName={setConsultantName}
-        consultantRating={consultantRating}
-        setConsultantRating={setConsultantRating}
+        consultants={consultants}
+        setConsultants={setConsultants}
         currentTranscriptId={transcriptId}
         onLoadTranscript={setTranscriptId}
         onTickersLoaded={setSharedTickers}
@@ -51,7 +68,7 @@ function App() {
       />
       <div style={{ width: "100%" }}>
         {transcriptId && (
-          <TranscriptEditor transcriptId={transcriptId} externalTickers={sharedTickers} externalSubsectors={sharedSubsectors} />
+          <TranscriptEditor transcriptId={transcriptId} externalTickers={sharedTickers} externalSubsectors={sharedSubsectors} consultants={consultants} />
         )}
         {!transcriptId && (
           <p style={{ color: '#666', marginTop: "1px" }}>Load a saved transcript or upload a new one to begin.</p>

@@ -12,6 +12,7 @@ import transcriptRoutes from "./routes/transcripts.js";
 import annotationsRouter from "./routes/annotations.js";
 import bloombergRouter from "./routes/bloombergroute.js";
 import s3Router from "./routes/s3.js";
+import usersRouter from "./routes/users.js";
 import pool from "./database/db.js";
 
 dotenv.config();
@@ -64,6 +65,7 @@ app.use("/transcripts", transcriptRoutes);
 app.use("/annotations", annotationsRouter);
 app.use("/bloombergdata", bloombergRouter);
 app.use("/s3", s3Router);
+app.use("/users", usersRouter);
 
 // Serve frontend build (if present) so the same Render service can host both API and UI
 const __filename = fileURLToPath(import.meta.url);
@@ -97,8 +99,7 @@ async function ensureSchema() {
 		  filename TEXT,
 		  content TEXT,
 		  created_at TIMESTAMP DEFAULT now(),
-		  consultant_name TEXT,
-		  consultant_rating NUMERIC
+		  consultant_ids INTEGER[]
 		);
 		`);
 
@@ -116,19 +117,46 @@ async function ensureSchema() {
 		);
 		`);
 
-		// Add consultant_name if missing (safe for existing table)
-		await pool.query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS consultant_name TEXT");
-		// Add consultant_rating as NUMERIC if missing
-		await pool.query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS consultant_rating NUMERIC");
+		// Create users table
+		await pool.query(`
+		CREATE TABLE IF NOT EXISTS users (
+		  user_id SERIAL PRIMARY KEY,
+		  first_name TEXT NOT NULL,
+		  last_name TEXT NOT NULL,
+		  rating NUMERIC,
+		  person_identity TEXT UNIQUE,
+		  created_at TIMESTAMP DEFAULT now()
+		);
+		`);
+
+		// Create transcript_consultants junction table
+		await pool.query(`
+		CREATE TABLE IF NOT EXISTS transcript_consultants (
+		  id SERIAL PRIMARY KEY,
+		  transcript_id INTEGER REFERENCES transcripts(id) ON DELETE CASCADE,
+		  user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+		  created_at TIMESTAMP DEFAULT now(),
+		  UNIQUE(transcript_id, user_id)
+		);
+		`);
+
+		// Add indexes
+		await pool.query("CREATE INDEX IF NOT EXISTS idx_transcript_consultants_transcript ON transcript_consultants(transcript_id)");
+		await pool.query("CREATE INDEX IF NOT EXISTS idx_transcript_consultants_user ON transcript_consultants(user_id)");
+		await pool.query("CREATE INDEX IF NOT EXISTS idx_users_person_identity ON users(person_identity)");
+
+		// Add consultant_ids array if missing
+		await pool.query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS consultant_ids INTEGER[]");
 		// Add s3_key column for S3 uploads
 		await pool.query("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS s3_key TEXT");
-		// If consultant_rating exists but is integer, convert to NUMERIC (USING cast)
+		// Drop old columns if they exist
 		try {
-			await pool.query("ALTER TABLE transcripts ALTER COLUMN consultant_rating TYPE NUMERIC USING (consultant_rating::numeric)");
+			await pool.query("ALTER TABLE transcripts DROP COLUMN IF EXISTS consultant_name");
+			await pool.query("ALTER TABLE transcripts DROP COLUMN IF EXISTS consultant_rating");
 		} catch (e) {
-			// ignore if alter not applicable
+			// ignore if columns don't exist
 		}
-		console.log("✅ Ensured transcripts and annotations tables and columns");
+		console.log("✅ Ensured transcripts, annotations, users and transcript_consultants tables");
 	} catch (err) {
 		console.error("⚠️ Failed to ensure schema columns:", err.message);
 	}
