@@ -35,7 +35,7 @@ function App() {
               user_id: u.user_id,
               firstName: u.first_name,
               lastName: u.last_name,
-              rating: u.rating,
+              rating: u.rating !== null && u.rating !== undefined ? Number(u.rating) : null,
               person_identity: u.person_identity
             }));
             setConsultants(mappedConsultants);

@@ -23,6 +23,14 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
   const [activeConsultantIndex, setActiveConsultantIndex] = useState(null);
   const userSearchRef = useRef(null);
 
+  // Format rating for display (e.g., '1.00' -> '1', '1.50' -> '1.5')
+  const formatRating = (r) => {
+    if (r === null || r === undefined) return 'N/A';
+    const n = Number(r);
+    if (Number.isNaN(n)) return 'N/A';
+    return n % 1 === 0 ? n.toFixed(0) : n.toFixed(1);
+  };
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -80,9 +88,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
   // Handle user selection from dropdown
   const handleSelectUser = (user, consultantIndex) => {
-    // console.log('Selected user:', user);
-    // console.log('User rating:', user.rating, 'Type:', typeof user.rating);
-    const updated = [...consultants];
+    const updated = [...consultants]; 
     // Convert rating to number to ensure consistent formatting
     const ratingValue = user.rating !== null && user.rating !== undefined ? Number(user.rating) : null;
     updated[consultantIndex] = {
@@ -92,7 +98,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       rating: ratingValue,
       person_identity: user.person_identity
     };
-    console.log('Updated consultant:', updated[consultantIndex]);
+    // Update consultant and hide dropdown
     setConsultants(updated);
     setShowUserDropdown(false);
     setSearchQuery('');
@@ -404,12 +410,16 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
       consultants.forEach((c, idx) => {
         if (!c.firstName || c.firstName.trim() === "") missing.push(`Consultant ${idx + 1} first name`);
         if (!c.lastName || c.lastName.trim() === "") missing.push(`Consultant ${idx + 1} last name`);
+        if (!c.person_identity || c.person_identity.trim() === "") missing.push(`Consultant ${idx + 1} Identity`);
         if (c.rating === undefined || c.rating === null || String(c.rating).trim() === "") missing.push(`Consultant ${idx + 1} rating`);
+        else if (Number.isFinite(Number(c.rating)) && (Number(c.rating) < 1 || Number(c.rating) > 5)) {
+          missing.push(`Consultant ${idx + 1} rating must be between 1 and 5`);
+        }
       });
     }
 
     if (missing.length > 0) {
-      alert(`Please fill the following fields before saving: ${missing.join(', ')}`);
+      alert(`❌ Please fill the following fields before saving: ${missing.join(', ')}`);
       return;
     }
 
@@ -664,8 +674,8 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
         {consultants.map((consultant, index) => (
           <div key={index} style={{ position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
-              <div style={{ position: 'relative', width: 250 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 32, width: '100%' }}>
+              <div style={{ position: 'relative', width: 350 }}>
                 <input
                   type="text"
                   placeholder="First name"
@@ -710,11 +720,11 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
                   updated[index].lastName = e.target.value;
                   setConsultants(updated);
                 }}
-                style={{ width: 250, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
+                style={{ width: 350, padding: "6px 8px", borderRadius: 4, border: "1px solid #ddd" }}
               />
               <input
                 type="text"
-                placeholder="Identity (optional)"
+                placeholder="Identity "
                 value={consultant.person_identity || ''}
                 onChange={(e) => {
                   const updated = [...consultants];
@@ -739,9 +749,9 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
                 style={{ width: 120, padding: "6px 8px", borderRadius: 4, textAlign: "center", fontWeight: 700, border: "1px solid #ddd" }}
               >
                 <option value="">Rating</option>
-                {Array.from({ length: 21 }, (_, i) => (i * 0.5)).map((v) => (
-                  <option key={v} value={v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}>
-                    {v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}
+                {Array.from({ length: 5 }, (_, i) => i + 1).map((v) => (
+                  <option key={v} value={String(v)}>
+                    {String(v)}
                   </option>
                 ))}
               </select>
@@ -805,7 +815,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
                     </div>
                     <div style={{ fontSize: 12, color: '#666' }}>
                       {user.person_identity && `ID: ${user.person_identity} • `}
-                      Rating: {user.rating !== null && user.rating !== undefined ? user.rating : 'N/A'}
+                      Rating: {formatRating(user.rating)}
                     </div>
                   </div>
                 ))}
