@@ -74,7 +74,7 @@ router.post("/", upload.single("video"), async (req, res) => {
       [originalName, consultantIds]
     );
     const transcriptId = insertRes.rows[0].id;
-
+    
 
     const startTime = performance.now(); 
     // Process all chunks in parallel with batching

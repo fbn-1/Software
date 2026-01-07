@@ -37,10 +37,9 @@ const colorMap = {
   "--": "#e74c3c"
 };
 
-// Function to get ticker logo URL
+// Function to get ticker logo URL - logos disabled
 const getTickerLogo = (ticker) => {
-
-  return `https://logo.clearbit.com/${getCompanyDomain(ticker)}.com`;
+  return '';
 };
 
 // Map ticker symbols to company domains for logo fetching
@@ -910,19 +909,21 @@ const [title, setTitle] = useState("");
               transition: "all 0.2s"
             }}
           >
-            <img
-              src={getTickerLogo(t)}
-              alt={t}
-              style={{
-                width: "15px",
-                height: "15px",
-                borderRadius: "3px",
-                objectFit: "contain"
-              }}
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-            />
+            {getTickerLogo(t) && (
+              <img
+                src={getTickerLogo(t)}
+                alt={t}
+                style={{
+                  width: "15px",
+                  height: "15px",
+                  borderRadius: "3px",
+                  objectFit: "contain"
+                }}
+                onError={(e) => {
+                  e.target.style.display = "none";
+                }}
+              />
+            )}
             {t}
           </div>
         ))}

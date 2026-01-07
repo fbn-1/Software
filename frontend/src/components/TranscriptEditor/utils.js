@@ -10,10 +10,10 @@ export const getCompanyDomain = (ticker) => {
 };
 
 /**
- * Get ticker logo URL from Clearbit API
+ * Get ticker logo URL - logos disabled
  */
 export const getTickerLogo = (ticker) => {
-  return `https://logo.clearbit.com/${getCompanyDomain(ticker)}.com`;
+  return '';
 };
 
 /**

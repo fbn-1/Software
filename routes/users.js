@@ -51,6 +51,7 @@ router.get("/:id", async (req, res) => {
 
 // 4️⃣ Create new user
 router.post("/", async (req, res) => {
+  console.log("Creating new user with data:");
   try {
     const { first_name, last_name, rating, person_identity } = req.body;
     
@@ -60,19 +61,20 @@ router.post("/", async (req, res) => {
     if (!last_name || last_name.trim() === "") {
       return res.status(400).send("Last name is required");
     }
-    
-    // Check if person_identity already exists
-    if (person_identity && person_identity.trim() !== "") {
-      const existing = await pool.query(
-        "SELECT user_id FROM users WHERE person_identity = $1",
-        [person_identity.trim()]
-      );
-      if (existing.rows.length > 0) {
-        return res.status(409).json({ 
-          error: "A user with this identity already exists",
-          user_id: existing.rows[0].user_id 
-        });
-      }
+    // Ensure required fields present; check for duplicate first+last name below.
+    // Check if first_name + last_name already exists (case-insensitive)
+    const existingByNamePost = await pool.query(
+      `SELECT user_id FROM users WHERE LOWER(first_name) = LOWER($1) AND LOWER(last_name) = LOWER($2)`,
+      [first_name.trim(), last_name.trim()]
+    );
+
+     
+    if (existingByNamePost.rows.length > 0) {
+     console.log("existingByNamePost", existingByNamePost.rows);
+      return res.status(409).json({ 
+        error: `User with  ${first_name.trim()} ${last_name.trim()} already exists`,
+        user_id: existingByNamePost.rows[0].user_id
+      });
     }
     
     const result = await pool.query(
@@ -86,11 +88,12 @@ router.post("/", async (req, res) => {
         person_identity && person_identity.trim() !== "" ? person_identity.trim() : null
       ]
     );
-    
+     
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') { // Unique violation
-      return res.status(409).send("A user with this identity already exists");
+      console.log("Conflict error on user creation:", message);
+      return res.status(409).json({ error: message , raw: detail || constraint });
     }
     res.status(500).send(err.message);
   }
@@ -108,6 +111,14 @@ router.put("/:id", async (req, res) => {
     if (!last_name || last_name.trim() === "") {
       return res.status(400).send("Last name is required");
     }
+    // Check if another user already has the same first+last name (case-insensitive)
+    const existingByNamePut = await pool.query(
+      `SELECT user_id FROM users WHERE LOWER(first_name) = LOWER($1) AND LOWER(last_name) = LOWER($2) AND user_id != $3`,
+      [first_name.trim(), last_name.trim(), id]
+    );
+    if (existingByNamePut.rows.length > 0) {
+      return res.status(409).json({ error: `User with this ${first_name.trim()} ${last_name.trim()} already exists`, user_id: existingByNamePut.rows[0].user_id });
+    }
     
     const result = await pool.query(
       `UPDATE users 
@@ -122,12 +133,12 @@ router.put("/:id", async (req, res) => {
         id
       ]
     );
-    
+    console.log("Update result:", result.rows);
     if (result.rows.length === 0) return res.status(404).send("User not found");
     res.json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') { // Unique violation
-      return res.status(409).send("A user with this identity already exists");
+      return res.status(409).json({ error: message, raw: detail || constraint });
     }
     res.status(500).send(err.message);
   }

@@ -67,6 +67,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
   // Create new user
   const createUser = async (firstName, lastName, rating, person_identity = null) => {
+    console.log(`Creating user: ${firstName} ${lastName}, rating: ${rating}, identity: ${person_identity}`);
     try {
       const response = await axios.post('/users', {
         first_name: firstName,
@@ -74,15 +75,18 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
         rating: rating,
         person_identity: person_identity
       });
+      console.log('responseeee', response.data);
       return response.data;
     } catch (err) {
+
+      const backendMessage = err.response?.data?.error || err.response?.data || null;
       if (err.response?.status === 409) {
-        alert('A user with this identity already exists');
+        alert(backendMessage || 'A user with this name already exists');
       } else {
         console.error('Error creating user:', err);
-        alert('Failed to create user');
+        alert(backendMessage || 'Failed to create user');
       }
-      return null;
+   return null;
     }
   };
 
@@ -395,6 +399,7 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
 
   const handleSaveMetadata = async () => {
     // Update the transcript record created by /upload (must have uploadedId)
+    console.log('Saving transcript metadata...');
     const idToUpdate = uploadedId || currentTranscriptId;
     if (!idToUpdate) {
       alert("Please upload a video first, then click Save to update that transcript's metadata.");
@@ -444,11 +449,15 @@ export default function VideoUploader({ onTranscriptReady, title, setTitle, cons
             consultant.rating,
             consultant.person_identity
           );
-          if (newUser) {
+
+          console.log('Created new user:', newUser);
+
+          if (newUser!== null) {
             userIds.push(newUser.user_id);
             // Update consultant object with new user_id
             consultant.user_id = newUser.user_id;
           }
+      
         }
       }
 
