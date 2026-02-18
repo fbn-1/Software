@@ -1,5 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
+dotenv.config();
+
 import cors from "cors";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -10,12 +12,12 @@ import { fileURLToPath } from 'url';
 import uploadRoutes from "./routes/upload.js";
 import transcriptRoutes from "./routes/transcripts.js";
 import annotationsRouter from "./routes/annotations.js";
+import aiAnnotationsRouter from "./routes/ai-annotations.js";
 import bloombergRouter from "./routes/bloombergroute.js";
 import s3Router from "./routes/s3.js";
 import usersRouter from "./routes/users.js";
 import pool from "./database/db.js";
 
-dotenv.config();
 const app = express();
 
 app.use(express.json());
@@ -63,6 +65,7 @@ console.log("✅ FFmpeg path set to:", ffmpegInstaller.path);
 app.use("/upload", uploadRoutes);
 app.use("/transcripts", transcriptRoutes);
 app.use("/annotations", annotationsRouter);
+app.use("/ai-annotations", aiAnnotationsRouter);
 app.use("/bloombergdata", bloombergRouter);
 app.use("/s3", s3Router);
 app.use("/users", usersRouter);
@@ -80,7 +83,7 @@ app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOStri
 // Use a pathless middleware to avoid path-to-regexp parsing issues with '*' on some runtimes.
 app.use((req, res, next) => {
 	if (req.method !== 'GET') return next();
-	const apiPrefixes = ['/upload', '/transcripts', '/annotations', '/bloombergdata', '/health', '/api'];
+	const apiPrefixes = ['/upload', '/transcripts', '/annotations', '/ai-annotations', '/bloombergdata', '/health', '/api'];
 	if (apiPrefixes.some(p => req.path.startsWith(p))) return next();
 	const indexHtml = path.join(frontendBuildPath, 'index.html');
 	res.sendFile(indexHtml, err => {

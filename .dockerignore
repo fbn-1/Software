@@ -1,0 +1,54 @@
+# Dependencies
+node_modules
+frontend/node_modules
+
+# Build outputs
+frontend/build
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime files
+uploads/*
+audio_chunks/*
+chunks/*
+!uploads/.gitkeep
+!audio_chunks/.gitkeep
+!chunks/.gitkeep
+
+# Database dumps
+*.dump
+*.sql.backup
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Python cache
+__pycache__
+*.pyc

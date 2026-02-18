@@ -104,5 +104,24 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// DELETE all annotations for a transcript
+router.delete("/transcript/:transcriptId", async (req, res) => {
+  const { transcriptId } = req.params;
+  try {
+    const result = await pool.query(
+      `DELETE FROM annotations WHERE transcript_id = $1 RETURNING *`,
+      [transcriptId]
+    );
+
+    res.json({ 
+      message: "All annotations deleted", 
+      deletedCount: result.rowCount 
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Error deleting annotations");
+  }
+});
+
 
 export default router;

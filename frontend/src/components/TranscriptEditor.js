@@ -114,6 +114,115 @@ const [title, setTitle] = useState("");
   const [consultantName, setConsultantName] = useState("");
   const [consultantRating, setConsultantRating] = useState(null);
 
+  // AI Generation state
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(null);
+
+  // Handler for AI Generate All Data Points
+  const handleGenerateAllAnnotations = async () => {
+    if (!transcriptId) {
+      alert("Please select a transcript first");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "This will use AI to automatically generate all data points for this transcript. This may take 30-60 seconds. Continue?"
+    );
+    
+    if (!confirmed) return;
+
+    setIsGeneratingAll(true);
+    setGenerationProgress("🔄 Analyzing transcript with AI...");
+
+    try {
+      const res = await axios.post(`/ai-annotations/generate-all/${transcriptId}`);
+      
+      setGenerationProgress(`✅ Generated ${res.data.saved} data points!`);
+      
+      // Refresh annotations list
+      const updatedAnnotations = await fetchAnnotations();
+      
+      // Extract unique tickers and subsectors from generated annotations and add to selected
+      if (res.data.annotations && res.data.annotations.length > 0) {
+        const newTickers = new Set();
+        const newSubsectors = new Set();
+        
+        res.data.annotations.forEach(ann => {
+          if (ann.ticker) {
+            ann.ticker.split(',').forEach(t => {
+              const ticker = t.trim().toUpperCase();
+              if (ticker) newTickers.add(ticker);
+            });
+          }
+          if (ann.subsector) {
+            ann.subsector.split(',').forEach(s => {
+              const subsector = s.trim().toUpperCase();
+              if (subsector) newSubsectors.add(subsector);
+            });
+          }
+        });
+        
+        // Add new tickers to selected
+        setSelectedTickers(prev => {
+          const combined = new Set([...prev, ...newTickers]);
+          return Array.from(combined);
+        });
+        
+        // Add new subsectors to selected
+        setSelectedSubsectors(prev => {
+          const combined = new Set([...prev, ...newSubsectors]);
+          return Array.from(combined);
+        });
+      }
+      
+      alert(`Successfully generated ${res.data.saved} data points!`);
+    } catch (err) {
+      console.error("Generation failed:", err);
+      const errorMsg = err.response?.data?.error || err.message || "Unknown error";
+      alert(`Failed to generate annotations: ${errorMsg}`);
+      setGenerationProgress(`❌ Failed: ${errorMsg}`);
+    } finally {
+      setIsGeneratingAll(false);
+      setTimeout(() => setGenerationProgress(null), 5000);
+    }
+  };
+
+  // Handler for clearing all annotations
+  const handleClearAllAnnotations = async () => {
+    if (!transcriptId) {
+      alert("Please select a transcript first");
+      return;
+    }
+
+    if (annotations.length === 0) {
+      alert("No data points to clear");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ALL ${annotations.length} data points for this transcript? This cannot be undone.`
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      const res = await axios.delete(`/annotations/transcript/${transcriptId}`);
+      
+      // Refresh annotations list (should be empty now)
+      await fetchAnnotations();
+      
+      // Clear selected tickers and subsectors
+      setSelectedTickers([]);
+      setSelectedSubsectors([]);
+      
+      alert(`Successfully deleted ${res.data.deletedCount} data points`);
+    } catch (err) {
+      console.error("Clear failed:", err);
+      const errorMsg = err.response?.data?.error || err.message || "Unknown error";
+      alert(`Failed to clear annotations: ${errorMsg}`);
+    }
+  };
+
   // Handler for Data Title input
   const handleDataTitleChange = (e) => {
     console.log('Data Title changing to:', e.target.value);
@@ -324,7 +433,38 @@ const [title, setTitle] = useState("");
   // Fetch annotations
   useEffect(() => {
     if (!transcriptId) return;
-    fetchAnnotations();
+    fetchAnnotations().then(loadedAnnotations => {
+      // Extract tickers and subsectors from loaded annotations and add to selected
+      if (loadedAnnotations && loadedAnnotations.length > 0) {
+        const tickersFromAnnotations = new Set();
+        const subsectorsFromAnnotations = new Set();
+        
+        loadedAnnotations.forEach(ann => {
+          if (ann.ticker) {
+            ann.ticker.split(',').forEach(t => {
+              const ticker = t.trim().toUpperCase();
+              if (ticker) tickersFromAnnotations.add(ticker);
+            });
+          }
+          if (ann.subsector) {
+            ann.subsector.split(',').forEach(s => {
+              const subsector = s.trim().toUpperCase();
+              if (subsector) subsectorsFromAnnotations.add(subsector);
+            });
+          }
+        });
+        
+        setSelectedTickers(prev => {
+          const combined = new Set([...prev, ...tickersFromAnnotations]);
+          return Array.from(combined);
+        });
+        
+        setSelectedSubsectors(prev => {
+          const combined = new Set([...prev, ...subsectorsFromAnnotations]);
+          return Array.from(combined);
+        });
+      }
+    });
   }, [transcriptId]);
 
   const fetchAnnotations = async () => {
@@ -533,6 +673,59 @@ const [title, setTitle] = useState("");
 
     let rendered = chunkContent;
 
+    // Helper function to find text with flexible whitespace matching
+    const findTextFlexible = (content, searchText, startFrom = 0) => {
+      // First try exact match
+      const exactIdx = content.indexOf(searchText, startFrom);
+      if (exactIdx !== -1) {
+        return { index: exactIdx, matchedText: searchText };
+      }
+      
+      // Try normalized whitespace match
+      const normalizedSearch = searchText.replace(/\s+/g, ' ').trim();
+      let searchIdx = startFrom;
+      
+      while (searchIdx < content.length) {
+        // Find potential start (first non-whitespace char of search)
+        const firstChar = normalizedSearch[0];
+        let potentialStart = content.indexOf(firstChar, searchIdx);
+        
+        if (potentialStart === -1) break;
+        
+        // Extract a chunk and normalize it for comparison
+        const chunkEnd = Math.min(potentialStart + searchText.length + 50, content.length);
+        const chunk = content.substring(potentialStart, chunkEnd);
+        const normalizedChunk = chunk.replace(/\s+/g, ' ');
+        
+        if (normalizedChunk.startsWith(normalizedSearch)) {
+          // Find the actual end position in original content
+          let origPos = potentialStart;
+          let normPos = 0;
+          
+          while (normPos < normalizedSearch.length && origPos < content.length) {
+            if (/\s/.test(content[origPos])) {
+              // Skip whitespace in original
+              while (origPos < content.length && /\s/.test(content[origPos])) origPos++;
+              // Skip corresponding space in normalized
+              if (normalizedSearch[normPos] === ' ') normPos++;
+            } else {
+              origPos++;
+              normPos++;
+            }
+          }
+          
+          return { 
+            index: potentialStart, 
+            matchedText: content.substring(potentialStart, origPos)
+          };
+        }
+        
+        searchIdx = potentialStart + 1;
+      }
+      
+      return null;
+    };
+
     // Process each unique text
     occurrenceMap.forEach((annList, searchText) => {
       // Sort by occurrence index
@@ -542,10 +735,10 @@ const [title, setTitle] = useState("");
       const occurrences = [];
       let searchIndex = 0;
       while (true) {
-        const index = rendered.indexOf(searchText, searchIndex);
-        if (index === -1) break;
-        occurrences.push({ index, text: searchText });
-        searchIndex = index + 1;
+        const result = findTextFlexible(rendered, searchText, searchIndex);
+        if (!result) break;
+        occurrences.push({ index: result.index, text: result.matchedText });
+        searchIndex = result.index + 1;
       }
 
       // Replace each occurrence with highlighted version
@@ -557,9 +750,10 @@ const [title, setTitle] = useState("");
         if (occIndex >= 0 && occIndex < occurrences.length) {
           const occ = occurrences[occIndex];
           const safeDatatitle = ann.datatitle === null || ann.datatitle === undefined ? '' : ann.datatitle;
+          const displayText = occ.text; // Use the actual matched text from content
           
           const before = rendered.substring(0, occ.index);
-          const after = rendered.substring(occ.index + searchText.length);
+          const after = rendered.substring(occ.index + occ.text.length); // Use matched text length
           
           const highlighted = `<span 
             data-id="${ann.id}" 
@@ -572,12 +766,12 @@ const [title, setTitle] = useState("");
             data-rating="${ann.rating}" 
             contenteditable="false"
             style="background-color:${colorMap[ann.sentiment]};padding:2px 4px;border-radius:3px;cursor:pointer;"
-          >${searchText}</span>`;
+          >${displayText}</span>`;
           
           rendered = before + highlighted + after;
           
           // Update all subsequent occurrences' indices to account for the HTML we added
-          const addedLength = highlighted.length - searchText.length;
+          const addedLength = highlighted.length - occ.text.length;
           for (let j = occIndex + 1; j < occurrences.length; j++) {
             occurrences[j].index += addedLength;
           }
@@ -765,7 +959,9 @@ const [title, setTitle] = useState("");
       const updated = await fetchAnnotations();
       if (updated) setAnnotations(updated);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to save annotation:', err);
+      console.error('Error response:', err.response?.data);
+      alert(`Failed to save annotation: ${err.response?.data?.details || err.message}`);
     }
 
   setShowPopup(false);
@@ -888,6 +1084,78 @@ const [title, setTitle] = useState("");
 
   return (
     <div style={{ marginTop: 0, position: "relative" }}>
+      {/* AI Generate All Data Points Button */}
+      <div style={{ 
+        margin: '0 0 20px 0', 
+        padding: '15px', 
+        backgroundColor: '#f0f9ff', 
+        borderRadius: '8px',
+        border: '1px solid #0ea5e9'
+      }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleGenerateAllAnnotations}
+            disabled={isGeneratingAll || !transcriptId || chunkContent === "Processing..."}
+            style={{
+              backgroundColor: isGeneratingAll ? '#94a3b8' : '#8b5cf6',
+              color: 'white',
+              padding: '12px 24px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: isGeneratingAll ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              opacity: (!transcriptId || chunkContent === "Processing...") ? 0.5 : 1
+            }}
+          >
+            {isGeneratingAll ? (
+              <>
+                <span>⏳</span>
+                Generating...
+              </>
+            ) : (
+              <>
+               Generate All Data Points
+              </>
+            )}
+          </button>
+          
+          <button
+            onClick={handleClearAllAnnotations}
+            disabled={isGeneratingAll || !transcriptId || annotations.length === 0}
+            style={{
+              backgroundColor: '#ef4444',
+              color: 'white',
+              padding: '12px 24px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              opacity: (!transcriptId || annotations.length === 0) ? 0.5 : 1
+            }}
+          >
+            🗑️ Clear All ({annotations.length})
+          </button>
+        </div>
+        
+        {generationProgress && (
+          <p style={{ marginTop: '10px', color: '#0369a1', fontWeight: '500' }}>
+            {generationProgress}
+          </p>
+        )}
+        
+        <p style={{ marginTop: '8px', fontSize: '13px', color: '#64748b', marginBottom: 0 }}>
+          AI will analyze the entire transcript and create all annotations automatically
+        </p>
+      </div>
+
       {/* Metadata moved to VideoUploader; no inputs here anymore */}
       <h5 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px", marginTop: "2px" }}>TICKERS</h5>    
       <div style={{ marginBottom: "10px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: 'center' }}>
